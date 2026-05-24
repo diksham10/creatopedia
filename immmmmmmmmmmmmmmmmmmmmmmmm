@@ -1,0 +1,539 @@
+Overview
+Build the complete PromptHub backend: 82 endpoints across 14 domains, from an empty project skeleton to a fully functional API. The codebase follows a domain-driven folder structure under app/domains/.
+
+IMPORTANT
+
+This plan covers the full backend implementation. It is broken into 5 sequential phases. Each phase builds on the prior one. I will implement all phases after approval.
+
+Open Questions
+IMPORTANT
+
+1. Email Delivery: The PRD mentions "Send password reset email" and "Verify email with OTP/token". Should I stub these with console logging, or do you have an SMTP / email service (e.g., Resend, SendGrid, AWS SES) ready?
+
+IMPORTANT
+
+2. S3/R2 Credentials: For uploads, should I wire up actual boto3 calls to S3/R2, or stub the upload service to save files locally for now?
+
+IMPORTANT
+
+3. Instagram App Credentials: For the Instagram OAuth flow, do you have a Facebook App ID / Secret ready, or should I stub the integration?
+
+IMPORTANT
+
+4. Database URL: Do you have a PostgreSQL instance running? I'll configure it via .env — just need to know if you want a default postgresql+asyncpg://postgres:postgres@localhost:5432/prompthub or something else.
+
+IMPORTANT
+
+5. Rate Limiting: The PRD mentions slowapi. Should I add rate limiting in this phase, or defer it to polish?
+
+Dependencies to Install
+bash
+uv add "uvicorn[standard]" sqlmodel alembic asyncpg psycopg2-binary \
+      python-jose[cryptography] passlib[bcrypt] python-multipart \
+      pydantic-settings python-dotenv boto3 httpx slowapi
+Phase 1: Foundation & Auth (Core Infrastructure)
+Database Schema — All Tables
+Below is the complete data model. All tables use SQLModel with UUID primary keys and UTC timestamps.
+
+Creator (User) Table
+python
+class Creator(SQLModel, table=True):
+    id: uuid.UUID (PK, default=uuid4)
+    email: str (unique, indexed)
+    hashed_password: str
+    full_name: str | None
+    handle: str | None (unique, indexed)  # @handle
+    subdomain: str | None (unique, indexed)  # creator.prompthub.com
+    bio: str | None
+    avatar_url: str | None
+    role: str (default="user")  # "user" | "admin"
+    is_verified: bool (default=False)
+    is_onboarded: bool (default=False)
+    is_active: bool (default=True)  # soft-delete flag
+    created_at: datetime (default=utcnow)
+    updated_at: datetime (default=utcnow, on_update=utcnow)
+RefreshToken Table
+python
+class RefreshToken(SQLModel, table=True):
+    id: uuid.UUID (PK)
+    creator_id: uuid.UUID (FK -> creator.id, indexed)
+    token_hash: str (unique)
+    expires_at: datetime
+    is_revoked: bool (default=False)
+    created_at: datetime
+PasswordResetToken Table
+python
+class PasswordResetToken(SQLModel, table=True):
+    id: uuid.UUID (PK)
+    creator_id: uuid.UUID (FK -> creator.id)
+    token_hash: str (unique)
+    expires_at: datetime
+    is_used: bool (default=False)
+    created_at: datetime
+EmailVerificationToken Table
+python
+class EmailVerificationToken(SQLModel, table=True):
+    id: uuid.UUID (PK)
+    creator_id: uuid.UUID (FK -> creator.id)
+    token_hash: str (unique)
+    expires_at: datetime
+    is_used: bool (default=False)
+    created_at: datetime
+Category Table
+python
+class Category(SQLModel, table=True):
+    id: uuid.UUID (PK)
+    name: str (unique)
+    slug: str (unique, indexed)
+    description: str | None
+    icon_url: str | None
+    display_order: int (default=0)
+    is_active: bool (default=True)
+    created_at: datetime
+    updated_at: datetime
+Prompt Table
+python
+class Prompt(SQLModel, table=True):
+    id: uuid.UUID (PK)
+    creator_id: uuid.UUID (FK -> creator.id, indexed)
+    category_id: uuid.UUID | None (FK -> category.id, indexed)
+    title: str
+    slug: str (indexed)  # unique per creator
+    description: str | None
+    content: str  # the actual prompt text (gated)
+    ai_tool: str | None  # "ChatGPT", "Midjourney", etc.
+    output_type: str | None  # "text", "image", "code"
+    thumbnail_url: str | None
+    gate_type: str (default="free")  # "free" | "email" | "paid"
+    status: str (default="draft")  # "draft" | "published" | "archived"
+    view_count: int (default=0)  # denormalized
+    copy_count: int (default=0)  # denormalized
+    created_at: datetime
+    updated_at: datetime
+    # Unique constraint: (creator_id, slug)
+EmailCapture Table
+python
+class EmailCapture(SQLModel, table=True):
+    id: uuid.UUID (PK)
+    prompt_id: uuid.UUID (FK -> prompt.id, indexed)
+    creator_id: uuid.UUID (FK -> creator.id, indexed)
+    email: str (indexed)
+    captured_at: datetime
+    # Unique constraint: (prompt_id, email) — deduplication
+AdClient Table
+python
+class AdClient(SQLModel, table=True):
+    id: uuid.UUID (PK)
+    creator_id: uuid.UUID (FK -> creator.id, indexed)
+    name: str
+    contact_email: str | None
+    logo_url: str | None
+    report_token: str (unique, indexed)  # secure unauthenticated access
+    created_at: datetime
+    updated_at: datetime
+AdCampaign Table
+python
+class AdCampaign(SQLModel, table=True):
+    id: uuid.UUID (PK)
+    creator_id: uuid.UUID (FK -> creator.id, indexed)
+    client_id: uuid.UUID (FK -> ad_client.id, indexed)
+    name: str
+    banner_url: str
+    target_url: str
+    budget: float | None
+    status: str (default="draft")  # "draft" | "active" | "paused" | "completed"
+    start_date: date | None (indexed)
+    end_date: date | None (indexed)
+    impressions: int (default=0)  # denormalized
+    clicks: int (default=0)  # denormalized
+    created_at: datetime
+    updated_at: datetime
+AdPlacement Table
+python
+class AdPlacement(SQLModel, table=True):
+    id: uuid.UUID (PK)
+    creator_id: uuid.UUID (FK -> creator.id, indexed)
+    campaign_id: uuid.UUID (FK -> ad_campaign.id, indexed)
+    placement_type: str  # "global" | "prompt" | "category"
+    target_id: uuid.UUID | None  # prompt_id or category_id depending on type
+    priority: int (default=0)
+    is_active: bool (default=True)
+    created_at: datetime
+Portfolio Table
+python
+class Portfolio(SQLModel, table=True):
+    id: uuid.UUID (PK)
+    creator_id: uuid.UUID (FK -> creator.id, unique, indexed)
+    slug: str (unique, indexed)
+    title: str | None
+    tagline: str | None
+    theme: str (default="default")  # theme identifier
+    primary_color: str | None
+    font_family: str | None
+    custom_css: str | None
+    is_published: bool (default=False)
+    created_at: datetime
+    updated_at: datetime
+PortfolioHero Table
+python
+class PortfolioHero(SQLModel, table=True):
+    id: uuid.UUID (PK)
+    portfolio_id: uuid.UUID (FK -> portfolio.id, unique, indexed)
+    headline: str | None
+    subheadline: str | None
+    cta_text: str | None
+    cta_url: str | None
+    background_url: str | None
+    updated_at: datetime
+PortfolioStat Table
+python
+class PortfolioStat(SQLModel, table=True):
+    id: uuid.UUID (PK)
+    portfolio_id: uuid.UUID (FK -> portfolio.id, indexed)
+    label: str  # "Views", "Prompts Sold"
+    value: str  # "1M+", "500+"
+    icon: str | None
+    display_order: int (default=0)
+    created_at: datetime
+PortfolioWork Table
+python
+class PortfolioWork(SQLModel, table=True):
+    id: uuid.UUID (PK)
+    portfolio_id: uuid.UUID (FK -> portfolio.id, indexed)
+    title: str
+    description: str | None
+    image_url: str | None
+    link_url: str | None
+    prompt_id: uuid.UUID | None (FK -> prompt.id)
+    display_order: int (default=0)
+    created_at: datetime
+Inquiry Table
+python
+class Inquiry(SQLModel, table=True):
+    id: uuid.UUID (PK)
+    portfolio_id: uuid.UUID (FK -> portfolio.id, indexed)
+    creator_id: uuid.UUID (FK -> creator.id, indexed)
+    name: str
+    email: str
+    subject: str | None
+    message: str
+    status: str (default="unread")  # "unread" | "read" | "replied"
+    created_at: datetime
+AnalyticsEvent Table (raw pings)
+python
+class AnalyticsEvent(SQLModel, table=True):
+    id: uuid.UUID (PK)
+    creator_id: uuid.UUID (FK -> creator.id, indexed)
+    event_type: str (indexed)  # "view" | "copy" | "ad_impression" | "ad_click" | "email_capture"
+    entity_type: str | None  # "prompt" | "portfolio" | "campaign"
+    entity_id: uuid.UUID | None (indexed)
+    ip_address: str | None
+    session_id: str | None
+    metadata_json: str | None  # JSON string for extra data
+    created_at: datetime (indexed)
+AggregatedStat Table (cron-rolled)
+python
+class AggregatedStat(SQLModel, table=True):
+    id: uuid.UUID (PK)
+    creator_id: uuid.UUID (FK -> creator.id, indexed)
+    stat_date: date (indexed)
+    entity_type: str  # "prompt" | "portfolio" | "campaign"
+    entity_id: uuid.UUID | None (indexed)
+    views: int (default=0)
+    copies: int (default=0)
+    ad_impressions: int (default=0)
+    ad_clicks: int (default=0)
+    email_captures: int (default=0)
+    # Unique constraint: (creator_id, stat_date, entity_type, entity_id)
+InstagramToken Table
+python
+class InstagramToken(SQLModel, table=True):
+    id: uuid.UUID (PK)
+    creator_id: uuid.UUID (FK -> creator.id, unique, indexed)
+    instagram_user_id: str
+    username: str | None
+    access_token: str  # encrypted long-lived token
+    token_expires_at: datetime
+    created_at: datetime
+    updated_at: datetime
+Component: app/core/ — Foundation
+[MODIFY] 
+config.py
+Settings(BaseSettings) using pydantic-settings
+Fields: DATABASE_URL, JWT_SECRET, JWT_ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES, REFRESH_TOKEN_EXPIRE_DAYS, CRON_SECRET, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, S3_BUCKET, S3_REGION, INSTAGRAM_APP_ID, INSTAGRAM_APP_SECRET, INSTAGRAM_REDIRECT_URI
+Load from .env file
+[MODIFY] 
+database.py
+Async engine via create_async_engine with asyncpg
+async_session_maker using async_sessionmaker
+get_session async generator dependency
+init_db() function for table creation (dev only)
+[MODIFY] 
+security.py
+hash_password() / verify_password() using passlib bcrypt
+create_access_token() / create_refresh_token() using python-jose
+decode_token() with expiry validation
+get_current_user — FastAPI Depends that extracts Creator from Bearer token
+get_current_admin — wraps get_current_user + role check
+get_optional_user — returns Creator | None for 👤 endpoints
+verify_cron_secret — validates X-Cron-Secret header
+Component: app/common/ — Shared Utilities
+[MODIFY] 
+exceptions.py
+Custom exception classes: NotFoundException, ForbiddenException, ConflictException, BadRequestException
+FastAPI exception handlers registration
+[MODIFY] 
+pagination.py
+PaginationParams dependency (page, limit with defaults and max)
+PaginatedResponse[T] generic schema (items, total, page, limit, pages)
+Component: app/domains/auth/ — Authentication (9 endpoints)
+[MODIFY] 
+router.py
+All 9 endpoints:
+
+POST /register 🔓
+POST /login 🔓
+POST /refresh 🔓
+POST /logout 🔒
+POST /forgot-password 🔓
+POST /reset-password 🔓
+POST /verify-email 🔓
+GET /instagram/connect 🔒 (redirects to Instagram OAuth URL)
+GET /instagram/callback 🔓 (handles OAuth callback)
+[MODIFY] 
+schemas.py
+RegisterRequest, LoginRequest, TokenResponse, RefreshRequest
+ForgotPasswordRequest, ResetPasswordRequest, VerifyEmailRequest
+[MODIFY] 
+services.py
+Registration (hash pw, create creator, send verification)
+Login (verify pw, issue tokens, store refresh token hash)
+Refresh (validate refresh token, rotate)
+Logout (revoke refresh token)
+Password reset flow
+Email verification flow
+Component: app/domains/users/ — Creator/Profile (7 endpoints)
+[MODIFY] 
+models.py
+Creator SQLModel table (defined above)
+RefreshToken, PasswordResetToken, EmailVerificationToken tables
+[MODIFY] 
+router.py
+POST /creator/init 🔒
+GET /creator 🔒
+PUT /creator 🔒
+DELETE /creator 🔒 (soft delete)
+GET /creator/handle-check 🔓
+GET /creator/subdomain-check 🔓
+GET /creator/public/{handle} 🔓
+[MODIFY] 
+schemas.py
+CreatorInitRequest, CreatorUpdateRequest, CreatorResponse, CreatorPublicResponse
+[MODIFY] 
+services.py
+Onboarding init, CRUD, handle/subdomain availability checks, public profile fetch
+Phase 2: Content Core
+Component: app/domains/prompts/ — Prompts (8 endpoints) + Categories (5) + Email Capture (1)
+[MODIFY] 
+models.py
+Prompt, Category, EmailCapture tables
+[MODIFY] 
+router.py
+Prompts:
+
+GET /prompts 👤 (filterable: creator_id, category_id, status, gate_type, ai_tool, page, limit)
+POST /prompts 🔒
+GET /prompts/{id} 👤
+PUT /prompts/{id} 🔒
+DELETE /prompts/{id} 🔒
+GET /prompts/{id}/page 👤
+PATCH /prompts/{id}/status 🔒
+GET /prompts/{id}/captures 🔒
+Categories (separate router in same domain):
+
+GET /categories 🔓
+GET /categories/{slug} 🔓
+POST /categories ⚡
+PUT /categories/{id} ⚡
+DELETE /categories/{id} ⚡
+Email Capture:
+
+POST /email-capture 🔓
+[MODIFY] 
+schemas.py
+PromptCreate, PromptUpdate, PromptResponse, PromptPageResponse, PromptStatusUpdate
+CategoryCreate, CategoryUpdate, CategoryResponse
+EmailCaptureCreate, EmailCaptureResponse
+PromptFilter query params model
+[MODIFY] 
+services.py
+Prompt CRUD with creator_id isolation, slug generation, status toggling
+Category CRUD (admin only)
+Email capture with deduplication
+Component: app/domains/uploads/ — Uploads (2 endpoints)
+[MODIFY] 
+router.py
+POST /upload 🔒 (image/video)
+POST /upload/pdf 🔒
+[MODIFY] 
+services.py
+S3/R2 upload logic (or local stub)
+File type validation, size limits
+Phase 3: Creator Storefront
+Component: app/domains/portfolio/ — Portfolio (18 endpoints)
+[MODIFY] 
+models.py
+Portfolio, PortfolioHero, PortfolioStat, PortfolioWork, Inquiry tables
+[MODIFY] 
+router.py
+Portfolio Settings (5):
+
+GET /portfolio 🔒
+POST /portfolio 🔒
+PUT /portfolio 🔒
+PATCH /portfolio/publish 🔒
+GET /portfolio/public/{slug} 🔓
+Hero (2):
+
+GET /portfolio/hero 🔒
+PUT /portfolio/hero 🔒
+Stats (4):
+
+GET /portfolio/stats 🔒
+POST /portfolio/stats 🔒
+PUT /portfolio/stats/{id} 🔒
+DELETE /portfolio/stats/{id} 🔒
+Works (5):
+
+GET /portfolio/works 🔒
+POST /portfolio/works 🔒
+PUT /portfolio/works/{id} 🔒
+DELETE /portfolio/works/{id} 🔒
+PATCH /portfolio/works/reorder 🔒
+Inquiries (5):
+
+GET /portfolio/inquiries 🔒
+POST /portfolio/inquiries 🔓
+GET /portfolio/inquiries/{id} 🔒
+PATCH /portfolio/inquiries/{id}/status 🔒
+DELETE /portfolio/inquiries/{id} 🔒
+[MODIFY] 
+schemas.py
+Portfolio CRUD schemas, Hero schemas, Stat schemas, Work schemas (including reorder), Inquiry schemas
+[MODIFY] 
+services.py
+Full portfolio lifecycle with creator_id isolation
+Phase 4: Monetization & Integrations
+Component: app/domains/ads/ — Ads (16 endpoints)
+[MODIFY] 
+models.py
+AdClient, AdCampaign, AdPlacement tables
+[MODIFY] 
+router.py
+Clients CRUD (5 endpoints) 🔒
+Campaigns CRUD + status toggle (6 endpoints) 🔒
+Placements CRUD + discovery (5 endpoints) 🔒/🔓
+Events: POST /ads/click 🔓, POST /ads/impression 🔓
+Report: GET /ads/report/{token} 🔓
+[MODIFY] 
+schemas.py
+Client, Campaign, Placement, AdEvent, Report schemas
+[MODIFY] 
+services.py
+Full CRUD with creator isolation, campaign status management, ad serving logic, click/impression recording, report generation
+Component: app/domains/integrations/ — Instagram & Platforms (5 endpoints)
+[MODIFY] 
+models.py
+InstagramToken table
+[MODIFY] 
+router.py
+Instagram (4):
+
+GET /instagram/status 🔒
+GET /instagram/posts 🔒
+GET /instagram/oembed 🔒
+POST /instagram/disconnect 🔒
+Platforms (1):
+
+GET /platforms 🔒
+[MODIFY] 
+services.py
+Instagram Graph API calls via httpx, token management, oembed resolution
+Phase 5: Telemetry & Polish
+Component: app/domains/analytics/ — Analytics (7 endpoints)
+[MODIFY] 
+models.py
+AnalyticsEvent, AggregatedStat tables
+[MODIFY] 
+router.py
+GET /analytics/overview 🔒
+GET /analytics/stats 🔒 (date range, granularity filters)
+POST /analytics/view 🔓
+POST /analytics/event 🔓
+POST /analytics/sync 🔒
+GET /analytics/campaigns/{id} 🔒
+GET /analytics/prompts/{id} 🔒
+[MODIFY] 
+services.py
+Raw event ingestion, aggregation cron logic, overview/stats queries
+Component: Cron, Admin, System (4 endpoints)
+These will be added directly to app/main.py or small dedicated routers:
+
+Cron (/api/cron):
+POST /cron/aggregate 🔑 — Daily rollup into AggregatedStat
+POST /cron/refresh-instagram-tokens 🔑 — Refresh expiring tokens
+Admin (/api/admin):
+POST /admin/reload-schema ⚡ — Dev tool
+System:
+GET /health 🔓 — Health check
+Component: app/main.py — Application Entry Point
+[MODIFY] 
+main.py
+FastAPI app initialization with metadata (title, version, description)
+CORS middleware
+Rate limiting middleware (slowapi)
+Include all domain routers under /api/ prefix
+Exception handlers registration
+Lifespan event for DB startup
+Health check endpoint
+New Files
+[NEW] .env.example
+Template with all required environment variables
+[NEW] app/core/__init__.py, app/common/__init__.py, app/domains/*/__init__.py
+Package init files for all modules
+File Change Summary
+Component	Files Modified	Files Created	Endpoints
+Core (config, db, security)	3	3 (__init__.py)	—
+Common (exceptions, pagination)	2	1 (__init__.py)	—
+Auth	3	1 (__init__.py)	9
+Users/Creator	4	1 (__init__.py)	7
+Prompts + Categories + Email	4	1 (__init__.py)	14
+Uploads	2	1 (__init__.py)	2
+Portfolio	4	1 (__init__.py)	18
+Ads	4	1 (__init__.py)	16
+Integrations	3	1 (__init__.py)	5
+Analytics	3	1 (__init__.py)	7
+Main + System	1	1 (.env.example)	4
+Total	33	14	82
+Verification Plan
+Automated Tests
+bash
+# 1. Install dependencies
+uv add "uvicorn[standard]" sqlmodel alembic asyncpg psycopg2-binary \
+      python-jose[cryptography] passlib[bcrypt] python-multipart \
+      pydantic-settings python-dotenv boto3 httpx slowapi
+# 2. Start the server (should boot without errors)
+uv run uvicorn app.main:app --reload --port 8000
+# 3. Verify all routes registered
+curl http://localhost:8000/openapi.json | python -m json.tool | grep '"path"' | wc -l
+# Expected: 82 paths
+# 4. Health check
+curl http://localhost:8000/api/health
+# Expected: {"status": "ok"}
+# 5. Verify docs load
+# Open http://localhost:8000/docs in browser — all 82 endpoints should be visible
+Manual Verification
+Swagger UI at /docs should list all 82 endpoints grouped by tags
+Each endpoint should have proper request/response schemas
+Auth endpoints should return 401 when called without tokens
+Admin endpoints should return 403 for non-admin users
