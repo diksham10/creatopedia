@@ -9,3 +9,54 @@ wheels/
 # Virtual environments
 .venv
 .env
+
+# Local env files (do NOT commit secrets)
+.env.local
+.env.*.local
+.env.production
+
+# Node / Next build artifacts
+node_modules/
+.next/
+out/
+dist/
+build/
+
+# IDE/editor
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Python caches / build
+__pycache__/
+*.py[cod]
+pip-wheel-metadata/
+*.egg-info/
+
+# Logs, databases, coverage
+*.log
+*.sqlite3
+*.db
+*.sqlite
+.coverage
+.pytest_cache/
+htmlcov/
+
+# Uploads / temp
+uploads/
+media/
+tmp/
+var/
+
+# Secrets / keys
+*.pem
+*.key
+*.crt
+service-account*.json
+credentials.json
+
+# Docker / local compose overrides
+docker-compose.override.yml

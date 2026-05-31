@@ -22,6 +22,7 @@ class PromptCreate(BaseModel):
     output_type: OutputType = OutputType.text
     gate_type: GateType = GateType.open
     category_id: Optional[uuid.UUID] = None
+    thumbnail_url: Optional[str] = None
 
 class PromptUpdate(BaseModel):
     title: Optional[str] = None

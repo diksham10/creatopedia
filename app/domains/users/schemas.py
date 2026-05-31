@@ -15,6 +15,7 @@ class CreatorPublic(BaseModel):
     plan_tier: PlanTier
     onboarding_complete: bool
     created_at: datetime
+    role: str
 
     class Config:
         from_attributes = True
@@ -31,4 +32,9 @@ class CreatorUpdateRequest(BaseModel):
     bio: Optional[str] = None
     avatar_url: Optional[str] = None
     theme_color: Optional[str] = None
-    font_family: Optional[str] = None
+
+class EmailUpdateRequest(BaseModel):
+    email: EmailStr
+
+class PasswordUpdateRequest(BaseModel):
+    password: str

@@ -27,6 +27,7 @@ class Creator(BaseDBModel, table=True):
     avatar_url: Optional[str] = Field(default=None)
     plan_tier: PlanTier = Field(default=PlanTier.free)
     stripe_id: Optional[str] = Field(default=None)
+    role: str = Field(default="user")
 
     # Status flags
     is_active: bool = Field(default=True)

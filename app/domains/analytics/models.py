@@ -42,3 +42,17 @@ class AggregatedStat(BaseDBModel, table=True):
     ad_clicks: int = Field(default=0)
     email_captures: int = Field(default=0)
     unique_visitors: int = Field(default=0)
+
+
+class SubdomainVisit(BaseDBModel, table=True):
+    """Track visits to creator subdomains (multi-tenant)"""
+    __tablename__ = "subdomain_visits"
+    
+    subdomain: str = Field(nullable=False, index=True)
+    creator_id: Optional[uuid.UUID] = Field(
+        default=None, foreign_key="creators.id", index=True, nullable=True
+    )
+    path: str = Field(default="/")
+    user_email: Optional[str] = Field(default=None)
+    ip_hash: Optional[str] = Field(default=None, index=True)  # Base64 hash of IP+UA
+    user_agent: Optional[str] = Field(default=None)

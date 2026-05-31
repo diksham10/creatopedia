@@ -23,6 +23,30 @@ async def get_clients(db: AsyncSession, creator: Creator) -> list[AdClient]:
     result = await db.exec(select(AdClient).where(AdClient.creator_id == creator.id))
     return result.all()
 
+async def update_client(db: AsyncSession, creator: Creator, client_id: uuid.UUID, data: AdClientUpdate) -> AdClient:
+    result = await db.exec(select(AdClient).where(AdClient.id == client_id, AdClient.creator_id == creator.id))
+    client = result.first()
+    if not client:
+        raise NotFoundError("AdClient")
+    
+    update_data = data.model_dump(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(client, key, value)
+    
+    db.add(client)
+    await db.commit()
+    await db.refresh(client)
+    return client
+
+async def delete_client(db: AsyncSession, creator: Creator, client_id: uuid.UUID) -> None:
+    result = await db.exec(select(AdClient).where(AdClient.id == client_id, AdClient.creator_id == creator.id))
+    client = result.first()
+    if not client:
+        raise NotFoundError("AdClient")
+    
+    await db.delete(client)
+    await db.commit()
+
 async def create_campaign(db: AsyncSession, creator: Creator, data: AdCampaignCreate) -> AdCampaign:
     # Verify client belongs to creator
     client_result = await db.exec(select(AdClient).where(AdClient.id == data.client_id))
@@ -44,6 +68,30 @@ async def create_campaign(db: AsyncSession, creator: Creator, data: AdCampaignCr
 async def get_campaigns(db: AsyncSession, creator: Creator) -> list[AdCampaign]:
     result = await db.exec(select(AdCampaign).where(AdCampaign.creator_id == creator.id))
     return result.all()
+
+async def update_campaign(db: AsyncSession, creator: Creator, campaign_id: uuid.UUID, data: AdCampaignUpdate) -> AdCampaign:
+    result = await db.exec(select(AdCampaign).where(AdCampaign.id == campaign_id, AdCampaign.creator_id == creator.id))
+    campaign = result.first()
+    if not campaign:
+        raise NotFoundError("AdCampaign")
+    
+    update_data = data.model_dump(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(campaign, key, value)
+    
+    db.add(campaign)
+    await db.commit()
+    await db.refresh(campaign)
+    return campaign
+
+async def delete_campaign(db: AsyncSession, creator: Creator, campaign_id: uuid.UUID) -> None:
+    result = await db.exec(select(AdCampaign).where(AdCampaign.id == campaign_id, AdCampaign.creator_id == creator.id))
+    campaign = result.first()
+    if not campaign:
+        raise NotFoundError("AdCampaign")
+    
+    await db.delete(campaign)
+    await db.commit()
 
 async def record_click(db: AsyncSession, campaign_id: uuid.UUID):
     result = await db.exec(select(AdCampaign).where(AdCampaign.id == campaign_id))

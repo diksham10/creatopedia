@@ -50,6 +50,7 @@ async def create_prompt(
     gate_type: GateType = Form(GateType.open),
     category_id: uuid.UUID | None = Form(None),
     content: str | None = Form(None),
+    thumbnail_url: str | None = Form(None),
     file: UploadFile | None = File(None),
     db: AsyncSession = Depends(get_db),
     creator: Creator = Depends(get_current_creator)
@@ -73,6 +74,7 @@ async def create_prompt(
             category_id=category_id,
             content=pdf_url,
             content_type=ContentType.pdf,
+            thumbnail_url=thumbnail_url,
         )
     else:
         if not content:
@@ -87,6 +89,7 @@ async def create_prompt(
             category_id=category_id,
             content=content,
             content_type=ContentType.text,
+            thumbnail_url=thumbnail_url,
         )
 
     try:
@@ -118,6 +121,7 @@ async def update_prompt(
     gate_type: Optional[GateType] = Form(None),
     category_id: Optional[uuid.UUID] = Form(None),
     content: Optional[str] = Form(None),
+    thumbnail_url: Optional[str] = Form(None),
     file: UploadFile | None = File(None),
     db: AsyncSession = Depends(get_db),
     creator: Creator = Depends(get_current_creator),
@@ -132,6 +136,7 @@ async def update_prompt(
     if gate_type is not None: update_data["gate_type"] = gate_type
     if category_id is not None: update_data["category_id"] = category_id
     if content is not None: update_data["content"] = content
+    if thumbnail_url is not None: update_data["thumbnail_url"] = thumbnail_url
 
     if file:
         if file.content_type != "application/pdf":
@@ -197,7 +202,11 @@ class CategoryCreateUpdate(schemas.BaseModel):
     icon: Optional[str] = None
 
 @router.post("/categories", response_model=schemas.CategoryOut, status_code=201)
-async def create_category(data: CategoryCreateUpdate, db: AsyncSession = Depends(get_db)):
+async def create_category(
+    data: CategoryCreateUpdate, 
+    db: AsyncSession = Depends(get_db),
+    creator: Creator = Depends(get_current_creator)
+):
     category = Category(**data.model_dump())
     db.add(category)
     await db.commit()
@@ -205,7 +214,12 @@ async def create_category(data: CategoryCreateUpdate, db: AsyncSession = Depends
     return category
 
 @router.put("/categories/{category_id}", response_model=schemas.CategoryOut)
-async def update_category(category_id: uuid.UUID, data: CategoryCreateUpdate, db: AsyncSession = Depends(get_db)):
+async def update_category(
+    category_id: uuid.UUID, 
+    data: CategoryCreateUpdate, 
+    db: AsyncSession = Depends(get_db),
+    creator: Creator = Depends(get_current_creator)
+):
     from app.common.exceptions import NotFoundError
     category = await db.get(Category, category_id)
     if not category:
@@ -218,7 +232,11 @@ async def update_category(category_id: uuid.UUID, data: CategoryCreateUpdate, db
     return category
 
 @router.delete("/categories/{category_id}", status_code=204)
-async def delete_category(category_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def delete_category(
+    category_id: uuid.UUID, 
+    db: AsyncSession = Depends(get_db),
+    creator: Creator = Depends(get_current_creator)
+):
     from app.common.exceptions import NotFoundError
     category = await db.get(Category, category_id)
     if not category:

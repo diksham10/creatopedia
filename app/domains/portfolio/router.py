@@ -3,7 +3,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.core.database import get_db
 from app.domains.portfolio import schemas, services
 
-router = APIRouter(prefix="/api/users", tags=["Portfolio / Users Public"])
+router = APIRouter(prefix="/users", tags=["Portfolio / Users Public"])
 
 @router.get("/{subdomain}", response_model=schemas.PortfolioPublicOut)
 async def get_public_profile(subdomain: str, db: AsyncSession = Depends(get_db)):

@@ -8,7 +8,6 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlmodel.ext.asyncio.session import AsyncSession
 from app.core.config import settings
 from app.core.database import get_db
-from fastapi import Request
 
 pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -38,6 +37,35 @@ def decode_token(token: str) -> dict | None:
         return jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
     except JWTError:
         return None
+
+def set_auth_cookies(response: Response, access_token: str, refresh_token: str) -> None:
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        secure=settings.ENVIRONMENT == "production",
+        samesite="lax",
+        path="/",
+        domain=settings.COOKIE_DOMAIN,
+        max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+    )
+    response.set_cookie(
+        key="refresh_token",
+        value=refresh_token,
+        httponly=True,
+        secure=settings.ENVIRONMENT == "production",
+        samesite="lax",
+        path="/",
+        domain=settings.COOKIE_DOMAIN,
+        max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
+    )
+
+def clear_auth_cookies(response: Response) -> None:
+    response.delete_cookie(key="access_token", path="/", domain=settings.COOKIE_DOMAIN)
+    response.delete_cookie(key="refresh_token", path="/", domain=settings.COOKIE_DOMAIN)
+
+# Alias used by users/router.py
+get_password_hash = hash_password
 
 async def get_current_creator(
     request: Request,
@@ -128,6 +156,16 @@ async def get_optional_creator(
     
     # Try fetching the creator now that we know we have a token
     try:
-        return await get_current_creator(request, response, db)
+        return await get_current_creator(request, response, db, auth)
     except HTTPException:
         return None
+
+async def get_current_admin(
+    creator = Depends(get_current_creator)
+):
+    if creator.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to access this resource."
+        )
+    return creator

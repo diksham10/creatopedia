@@ -129,3 +129,27 @@ async def refresh_all_expiring_tokens(db: AsyncSession) -> int:
 
     await db.commit()
     return refreshed
+
+
+async def fetch_single_instagram_post(creator: "Creator", db: AsyncSession, post_id: str) -> dict:
+    """Fetch a single Instagram media item by ID using the stored access token."""
+    result = await db.exec(
+        select(InstagramToken).where(
+            InstagramToken.creator_id == creator.id,
+            InstagramToken.is_valid == True,
+        )
+    )
+    token = result.first()
+    if not token:
+        raise ValueError("Instagram not connected")
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(
+            f"{INSTAGRAM_API}/{post_id}",
+            params={
+                "fields": "id,caption,media_url,thumbnail_url,permalink,media_type,timestamp",
+                "access_token": token.access_token,
+            }
+        )
+        resp.raise_for_status()
+        return resp.json()

@@ -4,7 +4,7 @@ from sqlmodel import select, func
 from app.domains.analytics.models import EventLog, AggregatedStat
 from app.domains.users.models import Creator
 from app.common.enums import EventType
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 import uuid
 
 async def record_event(
@@ -38,6 +38,8 @@ async def get_overview(db: AsyncSession, creator: Creator) -> dict:
     """Return latest aggregated stats for the creator"""
     today = date.today()
     thirty_days_ago = today - timedelta(days=30)
+    # EventLog.created_at is TIMESTAMP — must compare with datetime, not date
+    thirty_days_ago_dt = datetime(thirty_days_ago.year, thirty_days_ago.month, thirty_days_ago.day, 0, 0, 0, tzinfo=timezone.utc).replace(tzinfo=None)
 
     # 1. Get Prompts Created Count
     from app.domains.prompts.models import Prompt
@@ -54,7 +56,7 @@ async def get_overview(db: AsyncSession, creator: Creator) -> dict:
             EventLog.creator_id == creator.id,
             EventLog.event_type == EventType.view,
             EventLog.entity_type == "portfolio",
-            EventLog.created_at >= thirty_days_ago
+            EventLog.created_at >= thirty_days_ago_dt
         )
     )
     portfolio_visits = portfolio_visits_result.first() or 0
@@ -140,10 +142,17 @@ async def aggregate_daily(db: AsyncSession, target_date: date) -> int:
     Called by cron job — rolls up EventLog rows into AggregatedStat.
     Returns count of creators processed.
     """
+    # Use datetime range to avoid func.date() type issues with asyncpg
+    start_dt = datetime(target_date.year, target_date.month, target_date.day, 0, 0, 0)
+    end_dt = start_dt + timedelta(days=1)
+
     # Get distinct creators with events on target_date
     result = await db.exec(
         select(EventLog.creator_id)
-        .where(func.date(EventLog.created_at) == target_date)
+        .where(
+            EventLog.created_at >= start_dt,
+            EventLog.created_at < end_dt,
+        )
         .distinct()
     )
     creator_ids = result.all()
@@ -156,7 +165,8 @@ async def aggregate_daily(db: AsyncSession, target_date: date) -> int:
             return select(func.count(EventLog.id)).where(
                 EventLog.creator_id == creator_id,
                 EventLog.event_type == event_type,
-                func.date(EventLog.created_at) == target_date,
+                EventLog.created_at >= start_dt,
+                EventLog.created_at < end_dt,
             )
 
         views = (await db.exec(count_events(EventType.view))).first() or 0
@@ -185,3 +195,124 @@ async def aggregate_daily(db: AsyncSession, target_date: date) -> int:
 
     await db.commit()
     return len(creator_ids)
+
+
+# ============================================
+# Subdomain Multi-Tenant Analytics
+# ============================================
+
+async def record_subdomain_visit(
+    db: AsyncSession,
+    subdomain: str,
+    path: str = "/",
+    user_email: str | None = None,
+    ip_hash: str | None = None,
+    user_agent: str | None = None,
+) -> str:
+    """Record a visit to a creator's subdomain"""
+    from app.domains.analytics.models import SubdomainVisit
+    from app.domains.users.services import get_creator_by_subdomain
+    
+    # Get creator by subdomain
+    creator = await get_creator_by_subdomain(db, subdomain)
+    
+    visit = SubdomainVisit(
+        subdomain=subdomain.lower(),
+        creator_id=creator.id if creator else None,
+        path=path,
+        user_email=user_email,
+        ip_hash=ip_hash,
+        user_agent=user_agent,
+    )
+    db.add(visit)
+    await db.commit()
+    return str(visit.id)
+
+
+async def get_subdomain_visit_stats(
+    db: AsyncSession,
+    subdomain: str,
+    days: int = 30,
+) -> dict:
+    """Get analytics for a subdomain"""
+    from app.domains.analytics.models import SubdomainVisit
+    
+    subdomain_lower = subdomain.lower()
+    start_date = datetime.now(timezone.utc) - timedelta(days=days)
+    
+    # Total visits
+    total_result = await db.exec(
+        select(func.count(SubdomainVisit.id)).where(
+            SubdomainVisit.subdomain == subdomain_lower,
+            SubdomainVisit.created_at >= start_date,
+        )
+    )
+    total_visits = total_result.first() or 0
+    
+    # Unique visitors (by IP hash)
+    unique_result = await db.exec(
+        select(func.count(func.distinct(SubdomainVisit.ip_hash))).where(
+            SubdomainVisit.subdomain == subdomain_lower,
+            SubdomainVisit.created_at >= start_date,
+        )
+    )
+    unique_visitors = unique_result.first() or 0
+    
+    # Last 7 days
+    last_7_start = datetime.now(timezone.utc) - timedelta(days=7)
+    last_7_result = await db.exec(
+        select(func.count(SubdomainVisit.id)).where(
+            SubdomainVisit.subdomain == subdomain_lower,
+            SubdomainVisit.created_at >= last_7_start,
+        )
+    )
+    last_7_days = last_7_result.first() or 0
+    
+    # Top paths
+    paths_result = await db.exec(
+        select(SubdomainVisit.path, func.count(SubdomainVisit.id).label("count"))
+        .where(
+            SubdomainVisit.subdomain == subdomain_lower,
+            SubdomainVisit.created_at >= start_date,
+        )
+        .group_by(SubdomainVisit.path)
+        .order_by(func.count(SubdomainVisit.id).desc())
+        .limit(10)
+    )
+    top_paths = [
+        {"path": row[0], "visits": row[1]}
+        for row in paths_result.all()
+    ]
+    
+    # Traffic by date
+    date_result = await db.exec(
+        select(
+            func.date(SubdomainVisit.created_at).label("visit_date"),
+            func.count(SubdomainVisit.id).label("visits"),
+            func.count(func.distinct(SubdomainVisit.ip_hash)).label("unique"),
+        )
+        .where(
+            SubdomainVisit.subdomain == subdomain_lower,
+            SubdomainVisit.created_at >= start_date,
+        )
+        .group_by(func.date(SubdomainVisit.created_at))
+        .order_by(func.date(SubdomainVisit.created_at))
+    )
+    traffic_by_date = [
+        {
+            "date": str(row[0]),
+            "visits": row[1],
+            "unique": row[2],
+        }
+        for row in date_result.all()
+    ]
+    
+    return {
+        "subdomain": subdomain_lower,
+        "total_visits": total_visits,
+        "unique_visitors": unique_visitors,
+        "last_7_days": last_7_days,
+        "top_paths": top_paths,
+        "traffic_by_date": traffic_by_date,
+        "period_days": days,
+    }

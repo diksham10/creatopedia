@@ -4,8 +4,85 @@ from app.core.database import get_db
 from app.core.security import get_current_creator
 from app.domains.users.models import Creator
 from app.domains.integrations import services, schemas
+import uuid
 
-router = APIRouter(prefix="/api/instagram", tags=["Instagram Integration"])
+router = APIRouter(prefix="/instagram", tags=["Instagram Integration"])
+public_router = APIRouter(prefix="/public/instagram", tags=["Instagram Public"])
+
+@router.post("/import-post", status_code=201)
+async def import_instagram_post(
+    data: schemas.ImportPostRequest,
+    db: AsyncSession = Depends(get_db),
+    creator: Creator = Depends(get_current_creator),
+):
+    """
+    Fetch a single Instagram post by ID and create a Prompt from it.
+    The caption becomes the prompt content; the image URL becomes the thumbnail.
+    """
+    try:
+        post = await services.fetch_single_instagram_post(creator, db, data.post_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to fetch Instagram post: {str(e)}")
+
+    caption = post.get("caption") or ""
+    media_url = post.get("media_url") or ""
+    thumbnail_url = post.get("thumbnail_url") or media_url
+
+    # Derive title: first line of caption, capped at 60 chars, or use provided title
+    if data.title:
+        title = data.title
+    elif caption:
+        title = caption.split("\n")[0].strip()[:60] or "Instagram Prompt"
+    else:
+        title = "Instagram Prompt"
+
+    # Build description from remainder of caption
+    description = data.description
+    if not description and caption:
+        lines = caption.split("\n")
+        if len(lines) > 1:
+            description = "\n".join(lines[1:]).strip()[:500]
+
+    content = caption or f"See Instagram post: {post.get('permalink', '')}"
+
+    from app.domains.prompts.schemas import PromptCreate
+    from app.domains.prompts.services import create_prompt
+    from app.common.enums import GateType, ContentType, OutputType
+
+    gate = GateType.open
+    for g in GateType:
+        if g.value == data.gate_type:
+            gate = g
+            break
+
+    prompt_data = PromptCreate(
+        title=title,
+        description=description,
+        content=content,
+        content_type=ContentType.text,
+        ai_tool=data.ai_tool,
+        output_type=OutputType.image,
+        gate_type=gate,
+        category_id=data.category_id,
+        thumbnail_url=thumbnail_url or None,
+    )
+
+    try:
+        prompt = await create_prompt(db, creator, prompt_data)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to create prompt: {str(e)}")
+
+    return {
+        "id": str(prompt.id),
+        "title": prompt.title,
+        "slug": prompt.slug,
+        "thumbnail_url": prompt.thumbnail_url,
+        "instagram_post_id": data.post_id,
+        "permalink": post.get("permalink"),
+    }
+
 
 @router.get("/auth-url", response_model=schemas.OAuthResponse)
 async def get_instagram_auth_url(creator: Creator = Depends(get_current_creator)):
@@ -90,3 +167,69 @@ async def disconnect_instagram(
         await db.delete(token)
         await db.commit()
     return {"status": "disconnected"}
+
+@public_router.get("/{creator_id}/user")
+async def get_public_instagram_user(creator_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    from sqlmodel import select
+    from app.domains.integrations.models import InstagramToken
+    from app.domains.users.services import get_creator_by_id
+
+    creator = await get_creator_by_id(db, str(creator_id))
+    if not creator:
+        return None
+
+    result = await db.exec(select(InstagramToken).where(
+        InstagramToken.creator_id == creator.id,
+        InstagramToken.is_valid == True
+    ))
+    token = result.first()
+    if not token:
+        return None
+
+    return {
+        "username": token.username,
+        "media_count": 0,
+        "followers_count": 0,
+        "follows_count": 0,
+        "profile_picture_url": None,
+        "biography": getattr(creator, "bio", "")
+    }
+
+@public_router.get("/{creator_id}/feed")
+async def get_public_instagram_feed(
+    creator_id: uuid.UUID,
+    limit: int = 100,
+    db: AsyncSession = Depends(get_db)
+):
+    from app.domains.users.services import get_creator_by_id
+    creator = await get_creator_by_id(db, str(creator_id))
+    if not creator:
+        raise HTTPException(status_code=404, detail="Creator not found")
+        
+    try:
+        posts = await services.fetch_instagram_posts(creator, db)
+        return posts[:limit]
+    except Exception as e:
+        # Don't fail the page loading on public feed fetch
+        return []
+
+@public_router.get("/{creator_id}/media")
+async def get_public_instagram_media(
+    creator_id: uuid.UUID,
+    url: str = Query(...),
+    db: AsyncSession = Depends(get_db)
+):
+    # Try to find a matching post in the feed or return empty
+    from app.domains.users.services import get_creator_by_id
+    creator = await get_creator_by_id(db, str(creator_id))
+    if not creator:
+        return {}
+        
+    try:
+        posts = await services.fetch_instagram_posts(creator, db)
+        for p in posts:
+            if p.get("permalink") == url:
+                return p
+        return {"permalink": url}
+    except Exception:
+        return {"permalink": url}

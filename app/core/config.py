@@ -1,5 +1,6 @@
 # app/core/config.py
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import field_validator
 from functools import lru_cache
 import os
 from dotenv import load_dotenv
@@ -47,6 +48,13 @@ class Settings(BaseSettings):
     # Cron security
     CRON_SECRET: str = ""
 
+    # Internal API secret (used by frontend server to call protected internal endpoints)
+    INTERNAL_API_SECRET: str = ""
+    # Optional comma-separated IP allowlist for internal API callers (e.g. "1.2.3.4,5.6.7.8")
+    INTERNAL_API_ALLOWLIST: str | None = None
+    # Subdomain blacklist (comma-separated). Names not allowed to be claimed as subdomains.
+    SUBDOMAIN_BLACKLIST: str | None = None
+
     # Stripe
     STRIPE_SECRET_KEY: str = ""
     STRIPE_WEBHOOK_SECRET: str = ""
@@ -56,6 +64,17 @@ class Settings(BaseSettings):
     SMTP_PORT: int = 587
     SMTP_USER: str = ""
     SMTP_PASSWORD: str = ""
+
+    @field_validator("COOKIE_DOMAIN", mode="before")
+    @classmethod
+    def _empty_cookie_domain_to_none(cls, v: object) -> object:
+        # `.env` often uses COOKIE_DOMAIN="" in dev; passing an empty `Domain=` attribute
+        # causes browsers to reject Set-Cookie. Treat empty as unset.
+        if v is None:
+            return None
+        if isinstance(v, str) and v.strip() == "":
+            return None
+        return v
 
 @lru_cache
 def get_settings() -> Settings:
