@@ -60,3 +60,13 @@ credentials.json
 
 # Docker / local compose overrides
 docker-compose.override.yml
+
+# Nested creatopedia app artifacts
+creatopedia/node_modules/
+creatopedia/.next/
+creatopedia/out/
+creatopedia/.env
+creatopedia/.env.*
+!creatopedia/.env.local.example
+creatopedia/.vscode/
+creatopedia/*.tsbuildinfo
