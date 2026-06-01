@@ -38,8 +38,6 @@ export default function RegisterPage() {
           skipAuthFlow: true,
         }
       )
-
-      await apiFetch('/users/me/profile', { skipAuthFlow: true })
     } catch (err) {
       let msg = 'Registration failed'
       if (err instanceof Error) {
@@ -57,9 +55,12 @@ export default function RegisterPage() {
 
     setLoading(false)
 
-    // Navigate to the main domain admin — using window.location ensures we
-    // leave the subdomain host (e.g. milan.localhost:3000) and land on the
-    // correct admin origin (localhost:3000/dashboard in dev, creatopedia.tech/dashboard in prod)
+    // The backend already sets auth cookies during registration, so we can
+    // navigate straight into the dashboard instead of waiting on a second
+    // profile fetch that may race the cookie write.
+    // Using window.location ensures we leave the subdomain host (e.g.
+    // milan.localhost:3000) and land on the correct admin origin
+    // (localhost:3000/dashboard in dev, creatopedia.tech/dashboard in prod).
     const baseDomain = process.env.NEXT_PUBLIC_BASE_DOMAIN?.replace(/^https?:\/\//, '') || 'creatopedia.tech'
     const isLocalhost = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname.endsWith('.localhost'))
     const adminUrl = isLocalhost

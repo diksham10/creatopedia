@@ -173,6 +173,7 @@ async def get_public_instagram_user(creator_id: uuid.UUID, db: AsyncSession = De
     from sqlmodel import select
     from app.domains.integrations.models import InstagramToken
     from app.domains.users.services import get_creator_by_id
+    import httpx
 
     creator = await get_creator_by_id(db, str(creator_id))
     if not creator:
@@ -186,14 +187,38 @@ async def get_public_instagram_user(creator_id: uuid.UUID, db: AsyncSession = De
     if not token:
         return None
 
-    return {
-        "username": token.username,
-        "media_count": 0,
-        "followers_count": 0,
-        "follows_count": 0,
-        "profile_picture_url": None,
-        "biography": getattr(creator, "bio", "")
-    }
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                f"{services.INSTAGRAM_API}/me",
+                params={
+                    "fields": "id,username,media_count,biography,profile_picture_url",
+                    "access_token": token.access_token,
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+        return {
+            "id": data.get("id") or token.instagram_user_id,
+            "username": data.get("username") or token.username,
+            "media_count": data.get("media_count") or 0,
+            "followers_count": data.get("followers_count") or 0,
+            "follows_count": data.get("follows_count") or 0,
+            "profile_picture_url": data.get("profile_picture_url"),
+            "biography": data.get("biography") or getattr(creator, "bio", ""),
+            "is_connected": True,
+        }
+    except Exception:
+        return {
+            "username": token.username,
+            "media_count": 0,
+            "followers_count": 0,
+            "follows_count": 0,
+            "profile_picture_url": None,
+            "biography": getattr(creator, "bio", ""),
+            "is_connected": True,
+        }
 
 @public_router.get("/{creator_id}/feed")
 async def get_public_instagram_feed(

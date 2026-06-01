@@ -2,6 +2,7 @@
 from fastapi import APIRouter, Depends, Request, Header
 from sqlmodel.ext.asyncio.session import AsyncSession
 from typing import Optional
+from pydantic import BaseModel
 from app.core.database import get_db
 from app.core.security import get_current_creator, get_optional_creator
 from app.domains.analytics import services
@@ -123,10 +124,19 @@ async def cron_aggregate(
 public_router = APIRouter(prefix="/analytics", tags=["Analytics (Public)"])
 
 
+class SubdomainVisitCreate(BaseModel):
+    subdomain: str
+    path: Optional[str] = "/"
+    user_email: Optional[str] = None
+    ip_hash: Optional[str] = None
+    user_agent: Optional[str] = None
+
+
 @public_router.post("/track-subdomain-visit", status_code=202)
 async def track_subdomain_visit(
     request: Request,
-    subdomain: str,
+    payload: SubdomainVisitCreate | None = None,
+    subdomain: Optional[str] = None,
     path: Optional[str] = "/",
     user_email: Optional[str] = None,
     ip_hash: Optional[str] = None,
@@ -148,6 +158,13 @@ async def track_subdomain_visit(
     - ip_hash: Base64-encoded hash of IP + User-Agent
     - user_agent: Visitor's user agent string
     """
+    if payload:
+        subdomain = payload.subdomain or subdomain
+        path = payload.path or path
+        user_email = payload.user_email or user_email
+        ip_hash = payload.ip_hash or ip_hash
+        user_agent = payload.user_agent or user_agent
+
     # Verify internal secret in production. If not an internal call, require
     # authentication and verify ownership of the subdomain.
     internal_ok = False

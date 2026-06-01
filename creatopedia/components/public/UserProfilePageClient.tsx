@@ -69,6 +69,7 @@ export default function UserProfilePageClient({ creator, igUser, igFeed, categor
   const [activeTab, setActiveTab] = useState<'creation' | 'profile'>('creation')
   const [activeCategory, setActiveCategory] = useState<string | null>(null)
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('list')
+  const instagramConnected = Boolean(igUser)
 
   // Map category id → category
   const categoryMap = useMemo(() => {
@@ -250,25 +251,33 @@ export default function UserProfilePageClient({ creator, igUser, igFeed, categor
           <div className="w-full max-w-sm mx-auto flex items-center justify-between mt-6 pt-6 border-t border-white/5 font-sans text-white/80 select-none">
             <div className="flex items-center gap-1.5">
               <span className="font-black text-white text-xs md:text-sm">
-                {igUser?.followers_count ? `${(igUser.followers_count / 1000).toFixed(1)}k` : '252k'}
+                {instagramConnected && igUser?.followers_count !== undefined
+                  ? `${(igUser.followers_count / 1000).toFixed(1)}k`
+                  : '—'}
               </span>
               <span className="text-[10px] text-white/40 uppercase tracking-wider font-light">Followers</span>
             </div>
             <span className="text-white/10">|</span>
             <div className="flex items-center gap-1.5">
               <span className="font-black text-white text-xs md:text-sm">
-                {igUser?.follows_count ?? '378'}
+                {instagramConnected && igUser?.follows_count !== undefined ? igUser.follows_count : '—'}
               </span>
               <span className="text-[10px] text-white/40 uppercase tracking-wider font-light">Following</span>
             </div>
             <span className="text-white/10">|</span>
             <div className="flex items-center gap-1.5">
               <span className="font-black text-white text-xs md:text-sm">
-                {igUser?.media_count ?? '115'}
+                {instagramConnected && igUser?.media_count !== undefined ? igUser.media_count : '—'}
               </span>
               <span className="text-[10px] text-white/40 uppercase tracking-wider font-light">Posts</span>
             </div>
           </div>
+
+          {!instagramConnected && (
+            <p className="mt-4 text-sm text-zinc-400">
+              Instagram not connected by user.
+            </p>
+          )}
         </div>
       </div>
 

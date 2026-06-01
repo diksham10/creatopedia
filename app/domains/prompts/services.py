@@ -89,6 +89,7 @@ async def update_prompt(
     for field, value in data.model_dump(exclude_unset=True).items():
         setattr(prompt, field, value)
     prompt.touch()
+    print(f"Updating prompt {prompt.id} with data: {data}")
     db.add(prompt)
     await db.commit()
     await db.refresh(prompt)

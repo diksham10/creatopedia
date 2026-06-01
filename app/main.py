@@ -10,7 +10,7 @@ from app.core.database import create_db_and_tables
 from app.domains.auth.router import router as auth_router
 from app.domains.users.router import router as users_router, public_router as users_public_router
 from app.domains.prompts.router import router as prompts_router
-from app.domains.ads.router import router as ads_router
+from app.domains.ads.router import router as ads_router, public_router as ads_public_router
 from app.domains.portfolio.router import router as portfolio_router
 from app.domains.analytics.router import router as analytics_router, public_router as analytics_public_router
 from app.domains.integrations.router import router as integrations_router
@@ -64,6 +64,7 @@ app.include_router(users_router, prefix=PREFIX)
 app.include_router(users_public_router, prefix=PREFIX)  # Public users endpoints
 app.include_router(prompts_router, prefix=PREFIX)
 app.include_router(ads_router, prefix=PREFIX)
+app.include_router(ads_public_router, prefix=PREFIX)
 app.include_router(portfolio_router, prefix=PREFIX)
 app.include_router(analytics_router, prefix=PREFIX)
 app.include_router(analytics_public_router, prefix=PREFIX)  # Public analytics endpoints

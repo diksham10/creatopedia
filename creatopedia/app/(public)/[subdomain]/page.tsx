@@ -7,6 +7,8 @@ import { AdCampaign, Prompt } from '@/types'
 import { AdPlacementData } from '@/components/public/AdBanner'
 import { headers } from 'next/headers'
 import CreatopediaLanding from '@/components/public/CreatopediaLanding'
+import SubdomainViewTracker from '@/components/public/SubdomainViewTracker'
+import { getUserBySubdomain } from '@/lib/subdomain-utils'
 
 // ISR: cache at edge for 60s, revalidate in background.
 // force-dynamic / revalidate=0 caused cold DB+Instagram hits on every request,
@@ -21,16 +23,12 @@ interface Params {
 export async function generateMetadata({ params }: Params): Promise<Metadata> {
   const { subdomain } = await params
 
-  let dbPortfolio = null
+  let creator = null
   try {
-    dbPortfolio = await apiFetchServer<{
-      creator: { id: string; name: string; handle: string; bio: string | null; avatar_url: string | null; }
-    } | null>(`/users/${subdomain}`)
+    creator = await getUserBySubdomain(subdomain)
   } catch (e) {
     // 404 or other error, handled below
   }
-
-  const creator = dbPortfolio ? { ...dbPortfolio.creator, subdomain } : null
 
   if (!creator) {
     const headerList = await headers()
@@ -92,16 +90,12 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
 
 export default async function UserProfilePage({ params }: Params) {
   const { subdomain } = await params
-  let dbPortfolio = null
+  let creator = null
   try {
-    dbPortfolio = await apiFetchServer<{
-      creator: { id: string; name: string; handle: string; bio: string | null; avatar_url: string | null; }
-      theme_color?: string
-    } | null>(`/users/${subdomain}`)
+    creator = await getUserBySubdomain(subdomain)
   } catch (e) {
     // Handled below
   }
-  const creator = dbPortfolio ? { ...dbPortfolio.creator, subdomain, brand_color: dbPortfolio.theme_color } : null
 
   const headerList = await headers()
   const host = headerList.get('host') || ''
@@ -118,11 +112,17 @@ export default async function UserProfilePage({ params }: Params) {
     notFound()
   }
 
-  // 2. Fetch all published prompts for this creator
-  const promptsRes = await apiFetchServer<any>(
+  const creatorForUI = {
+    ...creator,
+    brand_color: '#6366f1',
+  }
+
+  // 2. Fetch only published prompts for the public profile page
+  const publishedPromptsRes = await apiFetchServer<any>(
     `/prompts?creator_id=${creator.id}&status=published`
   )
-  const prompts = Array.isArray(promptsRes) ? promptsRes : (promptsRes?.items || [])
+  const publishedPrompts = Array.isArray(publishedPromptsRes) ? publishedPromptsRes : (publishedPromptsRes?.items || [])
+  const prompts = publishedPrompts
 
   // 3. Fetch all categories that have published prompts from this creator
   const categoryIds = [
@@ -142,9 +142,14 @@ export default async function UserProfilePage({ params }: Params) {
 
   // 5. Fetch ad placements
   const now = new Date().toISOString()
-  const rawPlacements = await apiFetchServer<AdPlacementData[]>(
-    `/public/ads/placements?creator_id=${creator.id}&page_type=creator_page`
-  )
+  let rawPlacements: AdPlacementData[] = []
+  try {
+    rawPlacements = await apiFetchServer<AdPlacementData[]>(
+      `/public/ads/placements?creator_id=${creator.id}&page_type=creator_page`
+    )
+  } catch (error) {
+    console.warn('Ad placements unavailable for creator page:', error)
+  }
 
   const placements: AdPlacementData[] = (rawPlacements ?? [])
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -182,12 +187,13 @@ export default async function UserProfilePage({ params }: Params) {
 
   return (
     <main className="min-h-screen bg-[#0a0a0a]">
+      <SubdomainViewTracker subdomain={creator.subdomain || subdomain} />
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
       />
       <UserProfilePageClient
-        creator={creator as any}
+        creator={creatorForUI as any}
         igUser={igUser}
         igFeed={igFeed}
         categories={categories ?? []}

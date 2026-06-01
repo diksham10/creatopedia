@@ -46,6 +46,7 @@ async def create_prompt(
     description: str | None = Form(None),
     price: float | None = Form(None),
     ai_tool: str | None = Form(None),
+    status: str | None = Form(None),
     output_type: OutputType = Form(OutputType.text),
     gate_type: GateType = Form(GateType.open),
     category_id: uuid.UUID | None = Form(None),
@@ -55,6 +56,13 @@ async def create_prompt(
     db: AsyncSession = Depends(get_db),
     creator: Creator = Depends(get_current_creator)
 ):
+    # Normalize empty strings to None
+    description = description if description else None
+    ai_tool = ai_tool if ai_tool else None
+    status = status if status else None
+    content = content if content else None
+    thumbnail_url = thumbnail_url if thumbnail_url else None
+    
     if file:
         if file.content_type != "application/pdf":
             raise HTTPException(status_code=400, detail="Only PDF files are allowed")
@@ -93,7 +101,12 @@ async def create_prompt(
         )
 
     try:
+        parsed_status = PromptStatus(status) if status else PromptStatus.draft
         prompt = await services.create_prompt(db, creator, prompt_data)
+        prompt.status = parsed_status
+        db.add(prompt)
+        await db.commit()
+        await db.refresh(prompt)
         if file:
             prompt.content_type = ContentType.pdf
             db.add(prompt)
@@ -117,7 +130,7 @@ async def update_prompt(
     description: Optional[str] = Form(None),
     price: Optional[float] = Form(None),
     ai_tool: Optional[str] = Form(None),
-    status: Optional[PromptStatus] = Form(None),
+    status: Optional[str] = Form(None),
     gate_type: Optional[GateType] = Form(None),
     category_id: Optional[uuid.UUID] = Form(None),
     content: Optional[str] = Form(None),
@@ -127,16 +140,22 @@ async def update_prompt(
     creator: Creator = Depends(get_current_creator),
 ):
     update_data = {}
+    print(f"Received update for prompt {prompt_id} with fields: title={title}, description={description}, price={price}, ai_tool={ai_tool}, status={status}, gate_type={gate_type}, category_id={category_id}, content={'[file upload]' if file else content}, thumbnail_url={thumbnail_url}")
     
-    if title is not None: update_data["title"] = title
-    if description is not None: update_data["description"] = description
+    # For PATCH, only include fields that are explicitly provided (not None and not empty strings)
+    if title: update_data["title"] = title
+    if description: update_data["description"] = description
     if price is not None: update_data["price"] = price
-    if ai_tool is not None: update_data["ai_tool"] = ai_tool
-    if status is not None: update_data["status"] = status
+    if ai_tool: update_data["ai_tool"] = ai_tool
+    if status:
+        try:
+            update_data["status"] = PromptStatus(status)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid prompt status: {status}")
     if gate_type is not None: update_data["gate_type"] = gate_type
     if category_id is not None: update_data["category_id"] = category_id
-    if content is not None: update_data["content"] = content
-    if thumbnail_url is not None: update_data["thumbnail_url"] = thumbnail_url
+    if content: update_data["content"] = content
+    if thumbnail_url: update_data["thumbnail_url"] = thumbnail_url
 
     if file:
         if file.content_type != "application/pdf":
@@ -178,8 +197,8 @@ async def get_prompt_page(
         id=prompt.id,
         title=prompt.title,
         description=prompt.description,
-        # Only reveal content if free or owner is viewing
-        content=prompt.content if (prompt.gate_type == "free" or is_owner) else None,
+        # Only reveal content if open or owner is viewing
+        content=prompt.content if (prompt.gate_type == GateType.open or is_owner) else None,
         content_type=prompt.content_type,
         gate_type=prompt.gate_type,
         price=prompt.price,
@@ -187,7 +206,7 @@ async def get_prompt_page(
         output_type=prompt.output_type,
         creator={"id": str(prompt.creator_id)},
         category=prompt.category,
-        is_gated=prompt.gate_type != "free" and not is_owner,
+        is_gated=prompt.gate_type != GateType.open and not is_owner,
     )
 
 @router.get("/categories", response_model=list[schemas.CategoryOut])

@@ -52,7 +52,6 @@ export default function PromptModal({ isOpen, onClose, promptToEdit }: Props) {
           const data = await res.json()
           if (res.ok && data.length > 0) {
             setCategories(data)
-            setCategoryId(data[0].id)
           }
         } catch (e) {
           console.error(e)
@@ -252,6 +251,9 @@ export default function PromptModal({ isOpen, onClose, promptToEdit }: Props) {
                   className="w-full px-4 py-3 bg-zinc-800 border border-zinc-700 rounded-xl text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/50 text-sm transition-all"
                   required
                 >
+                  <option value="" disabled>
+                    Select a category
+                  </option>
                   {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               </div>

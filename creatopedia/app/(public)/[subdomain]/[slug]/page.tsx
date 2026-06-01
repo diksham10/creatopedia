@@ -27,16 +27,10 @@ interface AdPlacement extends Omit<AdPlacementData, 'position'> {
 
 export async function generateMetadata({ params }: Params): Promise<Metadata> {
   const { subdomain, slug } = await params
-  const dbPortfolio = await apiFetchServer<{
-    creator: { id: string; name: string; handle: string }
-    theme_color?: string
-  } | null>(`/users/${subdomain}`)
-  if (!dbPortfolio || !dbPortfolio.creator) return { title: 'Not Found' }
+  const dbPortfolio = await getCachedCreator(subdomain)
+  if (!dbPortfolio) return { title: 'Not Found' }
 
-  // Temporarily grab prompts for slug since we don't have a specific GET /public/prompts/subdomain/slug yet
-  const promptsRes = await apiFetchServer<any>(`/prompts?creator_id=${dbPortfolio.creator.id}&status=published`)
-  const prompts = Array.isArray(promptsRes) ? promptsRes : (promptsRes?.items || [])
-  const prompt = prompts.find((p: any) => p.slug === slug) // Note: this fetches all prompts, a specific endpoint would be better
+  const prompt = await getCachedPrompt(dbPortfolio.subdomain, slug)
 
   if (!prompt) return { title: 'Not Found' }
 

@@ -1,12 +1,17 @@
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlmodel.ext.asyncio.session import AsyncSession
+from sqlmodel import select
 from app.core.database import get_db
 from app.core.security import get_current_creator
 from app.domains.users.models import Creator
 from app.domains.ads import schemas, services
+from app.domains.ads.models import AdPlacement, AdCampaign
+from app.common.enums import AdStatus, PageType
 import uuid
+from datetime import datetime, timezone
 
 router = APIRouter(prefix="/ads", tags=["Ads"])
+public_router = APIRouter(prefix="/public/ads", tags=["Ads (Public)"])
 
 @router.post("/clients", response_model=schemas.AdClientOut, status_code=status.HTTP_201_CREATED)
 async def create_client(
@@ -100,3 +105,78 @@ async def record_impression(
 ):
     await services.record_impression(db, campaign_id)
     return {"status": "recorded"}
+
+
+@public_router.get("/placements")
+async def get_public_ad_placements(
+    creator_id: uuid.UUID = Query(...),
+    page_type: str | None = Query(None),
+    prompt_id: uuid.UUID | None = Query(None),
+    category_id: uuid.UUID | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Public endpoint used by the frontend to fetch active ad placements for a
+    creator page or prompt page.
+    """
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    query = (
+        select(AdPlacement, AdCampaign)
+        .join(AdCampaign, AdPlacement.campaign_id == AdCampaign.id)
+        .where(
+            AdCampaign.creator_id == creator_id,
+            AdCampaign.status == AdStatus.active,
+        )
+    )
+
+    if page_type:
+        normalized_page_type = page_type.strip().lower()
+        if normalized_page_type in {"creator_page", "creator-page", "creator"}:
+            normalized_page_type = PageType.global_.value
+        query = query.where(AdPlacement.page_type == normalized_page_type)
+    if prompt_id:
+        query = query.where(AdPlacement.prompt_id == prompt_id)
+    if category_id:
+        query = query.where(AdPlacement.category_id == category_id)
+
+    result = await db.exec(query)
+    rows = result.all()
+
+    placements = []
+    for placement, campaign in rows:
+        if campaign.start_date and campaign.start_date > now.date():
+            continue
+        if campaign.end_date and campaign.end_date < now.date():
+            continue
+
+        placements.append({
+            "id": str(placement.id),
+            "position": placement.position,
+            "is_global": placement.page_type == PageType.global_,
+            "prompt_id": str(placement.prompt_id) if placement.prompt_id else None,
+            "category_id": str(placement.category_id) if placement.category_id else None,
+            "creator_id": str(campaign.creator_id),
+            "created_at": placement.created_at.isoformat() if placement.created_at else None,
+            "campaign": {
+                "id": str(campaign.id),
+                "creator_id": str(campaign.creator_id),
+                "client_id": str(campaign.client_id) if campaign.client_id else None,
+                "name": campaign.name,
+                "banner_url": campaign.banner_url,
+                "banner_alt": None,
+                "target_url": campaign.target_url,
+                "utm_source": "",
+                "utm_medium": "",
+                "utm_campaign": None,
+                "client_webhook_url": None,
+                "report_token": None,
+                "status": campaign.status.value if hasattr(campaign.status, "value") else campaign.status,
+                "starts_at": campaign.start_date.isoformat() if campaign.start_date else None,
+                "ends_at": campaign.end_date.isoformat() if campaign.end_date else None,
+                "created_at": campaign.created_at.isoformat() if campaign.created_at else None,
+                "updated_at": campaign.updated_at.isoformat() if campaign.updated_at else None,
+            },
+        })
+
+    return placements

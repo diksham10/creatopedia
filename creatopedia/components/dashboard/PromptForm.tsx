@@ -88,9 +88,6 @@ export default function PromptForm({ defaultValues, promptId, onSuccess }: Props
       try {
         const data = await apiFetch<Category[]>('/categories')
         setCategories(data)
-        if (!categoryId && data.length > 0) {
-          setCategoryId(data[0].id)
-        }
       } catch (err) {
         console.error('Failed to fetch categories', err)
       }
@@ -238,8 +235,12 @@ export default function PromptForm({ defaultValues, promptId, onSuccess }: Props
     if (outputType) fd.append('output_type', outputType)
     if (gateType) fd.append('gate_type', gateType)
     if (gateType === 'payment' && price) fd.append('price', parseFloat(price).toString())
+    if (slug) fd.append('slug', slug)
     if (status) fd.append('status', status)
     if (thumbnailUrl) fd.append('thumbnail_url', thumbnailUrl)
+    if (contentType) fd.append('content_type', contentType)
+    if (pdfUrl) fd.append('pdf_url', pdfUrl)
+    fd.append('featured', featured ? 'true' : 'false')
 
     const url = isEdit ? `/prompts/${promptId}` : '/prompts'
     const method = isEdit ? 'PATCH' : 'POST'
@@ -337,6 +338,9 @@ export default function PromptForm({ defaultValues, promptId, onSuccess }: Props
           className={inputCls}
           required
         >
+          <option value="" disabled>
+            Select a category
+          </option>
           {categories.length === 0 && <option value="">No categories available</option>}
           {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>

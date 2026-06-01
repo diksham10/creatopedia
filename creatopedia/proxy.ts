@@ -2,10 +2,10 @@ import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 
 /**
- * PromptHub Middleware
+ * PromptHub Proxy
  * Handles subdomain routing and TikTok compatibility fixes.
  */
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const url = request.nextUrl
   const path = url.pathname
   const host = request.headers.get('host') || ''

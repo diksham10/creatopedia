@@ -110,7 +110,7 @@ export default function EnhancedPublicPromptUI({
     queryFn: async () => {
       if (!prompt.id) return []
       const data = await apiFetch<RelatedPromptType[]>(
-        `/public/prompts?creator_id=${creator.id}&status=published`
+        `/prompts?creator_id=${creator.id}&status=published`
       )
       return (data || []).filter((p) => p.id !== prompt.id).slice(0, 6)
     },
@@ -147,7 +147,7 @@ export default function EnhancedPublicPromptUI({
     async function fetchLibrary() {
       try {
         const promptsData = await apiFetch<Prompt[]>(
-          `/public/prompts?creator_id=${creator.id}&status=published`
+          `/prompts?creator_id=${creator.id}&status=published`
         )
         setLibraryPrompts(promptsData || [])
 

@@ -2,11 +2,91 @@ import { cookies } from 'next/headers'
 import { NextRequest, NextResponse } from 'next/server'
 import axios from 'axios'
 import { API_BASE_URL } from '@/lib/api/config'
-import { promptSchema } from '@/lib/validations'
 import { revalidateTag, revalidatePath } from 'next/cache'
 import { Prompt } from '@/types'
 
 interface Params { params: Promise<{ id: string }> }
+
+async function readPromptPayload(req: NextRequest) {
+  const contentType = req.headers.get('content-type') ?? ''
+
+  if (contentType.includes('multipart/form-data')) {
+    const formData = await req.formData()
+    const payload: Record<string, any> = {}
+    formData.forEach((value, key) => {
+      if (typeof value === 'string') payload[key] = value
+    })
+    return { payload, formData }
+  }
+
+  return { payload: await req.json(), formData: null }
+}
+
+function normalizePromptPayload(body: Record<string, any>) {
+  const normalized: Record<string, any> = { ...body }
+
+  if (typeof normalized.price === 'string') {
+    const parsedPrice = Number.parseFloat(normalized.price)
+    normalized.price = Number.isFinite(parsedPrice) ? parsedPrice : undefined
+  }
+
+  if (typeof normalized.featured === 'string') {
+    normalized.featured = normalized.featured === 'true'
+  }
+
+  return normalized
+}
+
+function toFormBody(data: Record<string, any>) {
+  const form = new URLSearchParams()
+
+  Object.entries(data).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === '') return
+    form.set(key, typeof value === 'boolean' ? String(value) : String(value))
+  })
+
+  return form
+}
+
+async function sendPromptForm(path: string, data: Record<string, any>, cookieHeader: string, method: 'PATCH' | 'DELETE') {
+  if (method === 'DELETE') {
+    const response = await fetch(`${API_BASE_URL.replace(/\/$/, '')}${path}`, {
+      method,
+      headers: { cookie: cookieHeader },
+    })
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      throw new Error(errorText || 'Request failed')
+    }
+
+    if (response.status === 204) {
+      return null
+    }
+
+    return response.json()
+  }
+
+  const response = await fetch(`${API_BASE_URL.replace(/\/$/, '')}${path}`, {
+    method,
+    headers: {
+      cookie: cookieHeader,
+      'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+    },
+    body: toFormBody(data),
+  })
+
+  if (!response.ok) {
+    const errorText = await response.text()
+    throw new Error(errorText || 'Request failed')
+  }
+
+  if (response.status === 204) {
+    return null
+  }
+
+  return response.json()
+}
 
 async function getPromptAndVerifyOwner(id: string): Promise<{
   user: any | null,
@@ -48,16 +128,51 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   const { user, prompt, unauthorized } = await getPromptAndVerifyOwner(id)
   if (unauthorized || !user || !prompt) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-  const body = await req.json()
-  const parsed = promptSchema.partial().safeParse(body)
-  if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
+  const { payload, formData } = await readPromptPayload(req)
+  console.log('=== PATCH /prompts/[id] ===')
+  console.log('Received payload:', payload)
+  console.log('Has formData:', !!formData)
+  if (formData) {
+    console.log('FormData entries:')
+    const entries: Record<string, any> = {}
+    formData.forEach((value, key) => {
+      entries[key] = value instanceof File ? `[File: ${value.name}]` : value
+    })
+    console.log(entries)
   }
+  
+  const normalizedBody = normalizePromptPayload(payload)
+  console.log('After normalization:', normalizedBody)
 
   try {
     const cookieHeader = (await cookies()).get('next-auth.session-token')?.value || ''
-    const resp = await axios.patch(`${API_BASE_URL.replace(/\/$/, '')}/prompts/${id}`, parsed.data, { headers: { cookie: cookieHeader } })
-    const data = resp.data
+    let data
+
+    if (formData) {
+      const body = new FormData()
+      formData.forEach((value, key) => {
+        body.append(key, value)
+      })
+      Object.entries(normalizedBody).forEach(([key, value]) => {
+        if (value === undefined || value === null || value === '') return
+        body.set(key, typeof value === 'boolean' ? String(value) : String(value))
+      })
+
+      const response = await fetch(`${API_BASE_URL.replace(/\/$/, '')}/prompts/${id}`, {
+        method: 'PATCH',
+        headers: { cookie: cookieHeader },
+        body,
+      })
+
+      if (!response.ok) {
+        const errorText = await response.text()
+        throw new Error(errorText || 'Request failed')
+      }
+
+      data = await response.json()
+    } else {
+      data = await sendPromptForm(`/prompts/${id}`, normalizedBody, cookieHeader, 'PATCH')
+    }
 
     // Invalidate cache tags
     revalidateTag(`prompt-${user.id}-${data.slug}`, 'max')
@@ -96,7 +211,7 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
 
   try {
     const cookieHeader = (await cookies()).get('next-auth.session-token')?.value || ''
-    await axios.delete(`${API_BASE_URL.replace(/\/$/, '')}/prompts/${id}`, { headers: { cookie: cookieHeader } })
+    await sendPromptForm(`/prompts/${id}`, {}, cookieHeader, 'DELETE')
 
     revalidateTag(`prompt-${prompt.creator_id}-${prompt.slug}`, 'max')
     revalidateTag(`prompts-list-${prompt.creator_id}`, 'max')

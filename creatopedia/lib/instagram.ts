@@ -25,10 +25,6 @@ export interface InstagramUser {
   website?: string
 }
 
-import { unstable_cache } from 'next/cache'
-
-const CACHE_TTL = 300 // 5 minutes in seconds
-
 async function fetchInstagramUserRaw(creatorId?: string): Promise<InstagramUser | null> {
   if (!creatorId) return null
   return await apiFetchServer<InstagramUser | null>(
@@ -36,12 +32,7 @@ async function fetchInstagramUserRaw(creatorId?: string): Promise<InstagramUser 
   )
 }
 
-export const fetchInstagramUser = (creatorId?: string) => 
-  unstable_cache(
-    async () => fetchInstagramUserRaw(creatorId),
-    ['ig-user', creatorId || 'none'],
-    { revalidate: CACHE_TTL, tags: [`ig-user-${creatorId}`] }
-  )()
+export const fetchInstagramUser = (creatorId?: string) => fetchInstagramUserRaw(creatorId)
 
 async function fetchInstagramFeedRaw(creatorId?: string, limit: number = 100): Promise<InstagramMedia[]> {
   if (!creatorId) return []
@@ -51,11 +42,7 @@ async function fetchInstagramFeedRaw(creatorId?: string, limit: number = 100): P
 }
 
 export const fetchInstagramFeed = (creatorId?: string, limit: number = 100) => 
-  unstable_cache(
-    async () => fetchInstagramFeedRaw(creatorId, limit),
-    ['ig-feed', creatorId || 'none', String(limit)],
-    { revalidate: CACHE_TTL, tags: [`ig-feed-${creatorId}`] }
-  )()
+  fetchInstagramFeedRaw(creatorId, limit)
 
 async function fetchInstagramMediaRaw(url: string, creatorId?: string): Promise<InstagramMedia | null> {
   if (!creatorId) return null
@@ -65,8 +52,4 @@ async function fetchInstagramMediaRaw(url: string, creatorId?: string): Promise<
 }
 
 export const fetchInstagramMedia = (url: string, creatorId?: string) => 
-  unstable_cache(
-    async () => fetchInstagramMediaRaw(url, creatorId),
-    ['ig-media', creatorId || 'none', url],
-    { revalidate: CACHE_TTL, tags: [`ig-media-${creatorId}`] }
-  )()
+  fetchInstagramMediaRaw(url, creatorId)
