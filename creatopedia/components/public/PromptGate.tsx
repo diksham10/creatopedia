@@ -68,12 +68,26 @@ export default function PromptGate({ prompt }: Props) {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ email, prompt_id: prompt.id }),
               })
-              const data = await res.json()
+              const responseData = await res.json()
+              
               if (!res.ok) {
                 setError('Something went wrong. Try again.')
               } else {
-                trackEmailSubmit(prompt.id)
-                setUnlockedContent(data.content)
+                // 1. 🔴 SAFE ANALYTICS: Prevent AdBlockers/Brave from crashing the site
+                try {
+                  trackEmailSubmit(prompt.id)
+                } catch (err) {
+                  console.warn("Analytics blocked by browser extension (AdBlock/Brave). Ignoring.")
+                }
+                
+                // 2.  USE THE CONTENT WE ALREADY HAVE IN MEMORY!
+                const unlockedText = responseData.content || responseData.data?.content || prompt.content                
+                if (unlockedText) {
+                  setUnlockedContent(unlockedText)
+                } else {
+                  // Fallback just in case the prompt is actually blank in the database
+                  setUnlockedContent("Thank you for unlocking!\n\n(Note: This prompt currently has no text saved in the database. The creator needs to edit it and add content.)")
+                }
               }
             } catch {
               setError('Network error. Please try again.')
@@ -311,13 +325,11 @@ function PromptContent({ prompt, content }: { prompt: Prompt; content: string })
   const currentVariant = isVariants ? variants[activeVariantIndex] : null
 
   // `content` = what goes INSIDE the prompt box (what users copy)
-  // New schema: variant.content holds the AI prompt; variant.description holds per-variant instructions
-  // Old schema (backward compat): variant.content is absent, so use variant.description as the prompt
   const currentPromptContent = currentVariant
     ? (currentVariant.content || currentVariant.description || '')
     : content
 
-  // `variantDescription` = per-variant instructions shown ABOVE the box (only in new schema when content field is present)
+  // `variantDescription` = per-variant instructions shown ABOVE the box
   const variantDescription = (currentVariant && currentVariant.content)
     ? (currentVariant.description || '')
     : ''

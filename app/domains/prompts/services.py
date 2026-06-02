@@ -104,26 +104,42 @@ async def delete_prompt(
     await db.delete(prompt)
     await db.commit()
 
+# Make sure to import the Prompt model at the top of your file if it's not already there!
+from app.domains.prompts.models import Prompt
+from app.common.exceptions import BadRequestError # Or NotFoundError depending on your setup
+
 async def capture_email(
     db: AsyncSession, data: EmailCaptureCreate, ip: str | None
-) -> EmailCapture:
-    # Check for duplicate capture
+):
+    # 1. Fetch the prompt first so we can return its hidden content
+    prompt = await db.get(Prompt, data.prompt_id)
+    if not prompt:
+        raise BadRequestError("Prompt not found")
+
+    # 2. Check for duplicate capture
     existing = await db.exec(
         select(EmailCapture).where(
             EmailCapture.email == data.email,
             EmailCapture.prompt_id == data.prompt_id
         )
     )
-    if existing.first():
-        raise ConflictError("Email already captured for this prompt")
+    capture = existing.first()
+    
+    # 3. If they haven't entered their email before, save it!
+    if not capture:
+        capture = EmailCapture(
+            email=data.email,
+            name=data.name,
+            prompt_id=data.prompt_id,
+            ip_address=ip,
+        )
+        db.add(capture)
+        await db.commit()
+        await db.refresh(capture)
 
-    capture = EmailCapture(
-        email=data.email,
-        name=data.name,
-        prompt_id=data.prompt_id,
-        ip_address=ip,
-    )
-    db.add(capture)
-    await db.commit()
-    await db.refresh(capture)
-    return capture
+    # 4. Return the dictionary containing the content the Next.js frontend is waiting for!
+    return {
+        "success": True,
+        "capture_id": str(capture.id),
+        "content": prompt.content
+    }

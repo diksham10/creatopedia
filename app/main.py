@@ -41,7 +41,7 @@ app.add_middleware(
     CORSMiddleware,
     # Allow local dev + subdomain localhost (e.g. milan.localhost:3000)
     # and production subdomains (e.g. creator.creatopedia.tech).
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=["*"],
     allow_origin_regex=r"^https?://([a-z0-9-]+\.)?(localhost|127\.0\.0\.1|creatopedia\.tech)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],

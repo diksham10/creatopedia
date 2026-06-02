@@ -1,10 +1,14 @@
-import { cookies } from 'next/headers'
 import { NextRequest, NextResponse } from 'next/server'
 import axios from 'axios'
 import { API_BASE_URL } from '@/lib/api/config'
 
+// Helper to safely grab ALL cookies (including FastAPI's access_token)
+function getForwardableCookies(req: NextRequest) {
+  return req.headers.get('cookie') || ''
+}
+
 export async function POST(req: NextRequest) {
-  const cookieHeader = (await cookies()).get('next-auth.session-token')?.value || ''
+  const cookieHeader = getForwardableCookies(req)
   if (!cookieHeader) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { email } = await req.json()
@@ -18,9 +22,30 @@ export async function POST(req: NextRequest) {
       subdomain: base,
       brand_color: '#6366f1'
     }, { headers: { cookie: cookieHeader } })
+    
     return NextResponse.json(resp.data)
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e)
-    return NextResponse.json({ error: msg }, { status: 400 })
+  } catch (e: any) {
+    const msg = e.response?.data?.detail || e.message || String(e)
+    return NextResponse.json({ error: msg }, { status: e.response?.status || 400 })
+  }
+}
+
+export async function PATCH(req: NextRequest) {
+  const cookieHeader = getForwardableCookies(req)
+  if (!cookieHeader) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  try {
+    const body = await req.json()
+
+    // Forward the PATCH request to FastAPI (Likely the /users/me/profile or /creators endpoint)
+    // Make sure this URL matches what FastAPI expects!
+    const resp = await axios.patch(`${API_BASE_URL.replace(/\/$/, '')}/users/me/profile`, body, {
+      headers: { cookie: cookieHeader }
+    })
+    
+    return NextResponse.json(resp.data)
+  } catch (e: any) {
+    const msg = e.response?.data?.detail || e.message || String(e)
+    return NextResponse.json({ error: msg }, { status: e.response?.status || 400 })
   }
 }

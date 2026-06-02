@@ -75,19 +75,30 @@ export default function PromptTable({ prompts: initial, subdomain }: Props) {
     }
   }
 
-  async function handleToggleStatus(p: PromptWithCategory) {
-    setTogglingId(p.id)
-    const newStatus = p.status === 'published' ? 'draft' : 'published'
-    try {
-      await apiFetch(`/prompts/${p.id}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ status: newStatus }),
-      })
-      setPrompts(prev => prev.map(x => x.id === p.id ? { ...x, status: newStatus } : x))
-      startTransition(() => router.refresh())
-    } catch {}
-    setTogglingId(null)
+async function handleToggleStatus(p: PromptWithCategory) {
+  setTogglingId(p.id)
+  const newStatus = p.status === 'published' ? 'draft' : 'published'
+  
+  try {
+    // 1. Create a real FormData object
+    const fd = new FormData()
+    fd.append('status', newStatus)
+
+    // 2. Send the FormData instead of JSON
+    await apiFetch(`/prompts/${p.id}`, {
+      method: 'PATCH',
+      body: fd, 
+    })
+    
+    // 3. Update the UI
+    setPrompts(prev => prev.map(x => x.id === p.id ? { ...x, status: newStatus } : x))
+    startTransition(() => router.refresh())
+  } catch (err) {
+    console.error("Failed to toggle status:", err)
   }
+  
+  setTogglingId(null)
+}
 
   async function handleDelete(id: string, title: string) {
     if (!confirm(`Delete "${title}"? This cannot be undone.`)) return

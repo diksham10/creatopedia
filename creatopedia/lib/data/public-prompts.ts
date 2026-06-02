@@ -6,19 +6,20 @@ export const getCachedCreator = (subdomain: string) =>
   unstable_cache(
     async (): Promise<Creator | null> => {
       try {
-        const dbPortfolio = await apiFetchServer<any>(`/users/${subdomain}`)
-        if (!dbPortfolio || !dbPortfolio.creator) return null
+        // 🔴 CHANGED: Matches FastAPI endpoint /users/by-subdomain/{subdomain}
+        const creator = await apiFetchServer<any>(`/users/by-subdomain/${subdomain}`)
+        if (!creator) return null
 
-        // Map backend PortfolioPublicOut to frontend Creator type
+        // 🔴 CHANGED: Backend returns creator directly, not wrapped in dbPortfolio.creator
         return {
-          id: dbPortfolio.creator.id,
-          email: '', // Not strictly needed publicly usually
-          name: dbPortfolio.creator.name || '',
-          handle: dbPortfolio.creator.handle || '',
-          subdomain: subdomain, // Assuming it's mapped 1-1
-          avatar_url: dbPortfolio.creator.avatar_url,
-          brand_color: dbPortfolio.theme_color || '#000000',
-          bio: dbPortfolio.creator.bio || '',
+          id: creator.id,
+          email: '', 
+          name: creator.name || '',
+          handle: creator.handle || '',
+          subdomain: subdomain, 
+          avatar_url: creator.avatar_url,
+          brand_color: creator.brand_color || '#6366f1', // Fallback color
+          bio: creator.bio || '',
           instagram_url: null,
           tiktok_url: null,
           stripe_id: null,
@@ -28,7 +29,6 @@ export const getCachedCreator = (subdomain: string) =>
           created_at: new Date().toISOString()
         }
       } catch (err) {
-        // If the backend returns 404 or portfolio isn't set up, treat as not found
         console.debug('getCachedCreator: portfolio fetch failed', { subdomain, err })
         return null
       }
@@ -40,13 +40,13 @@ export const getCachedCreator = (subdomain: string) =>
 export const getCachedPrompt = (creatorSubdomain: string, slug: string) => 
   unstable_cache(
     async (): Promise<Prompt | null> => {
-      // You may need to create a dedicated backend endpoint for fetching by subdomain + slug
-      // For now, let's fetch all published prompts for the subdomain user and find the match
       try {
-        const dbPortfolio = await apiFetchServer<{ creator: { id: string } } | null>(`/users/${creatorSubdomain}`)
-        if (!dbPortfolio || !dbPortfolio.creator) return null
+        // 🔴 CHANGED: Matches FastAPI endpoint
+        const creator = await apiFetchServer<any>(`/users/by-subdomain/${creatorSubdomain}`)
+        if (!creator || !creator.id) return null
 
-        const promptsRes = await apiFetchServer<any>(`/prompts?creator_id=${dbPortfolio.creator.id}&status=published`)
+        // Fetch prompts using the correct creator ID
+        const promptsRes = await apiFetchServer<any>(`/prompts?creator_id=${creator.id}&status=published`)
         const prompts = Array.isArray(promptsRes) ? promptsRes : (promptsRes?.items || [])
 
         return prompts.find((p: any) => p.slug === slug) || null

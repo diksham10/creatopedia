@@ -12,6 +12,20 @@ export type AnalyticsEventType =
   | 'ad_click'
   | 'ad_view_duration'
 
+// 🔴 THE TRANSLATOR: Maps frontend event names to the strict FastAPI Enums
+const EVENT_MAP: Record<string, string> = {
+  'prompt_view': 'view',
+  'pdf_view': 'view',
+  'ad_view_duration': 'view',
+  'prompt_copy': 'copy',
+  'email_unlock': 'email_capture',
+  'email_capture': 'email_capture',
+  'payment_unlock': 'click',
+  'pdf_download': 'click',
+  'ad_impression': 'ad_impression',
+  'ad_click': 'ad_click'
+}
+
 export function trackEvent({
   event_type, creator_id, prompt_id, campaign_id,
   placement_id, session_id, value, request,
@@ -32,16 +46,20 @@ export function trackEvent({
   const device_type = /mobile/i.test(ua) ? 'mobile' : /tablet/i.test(ua) ? 'tablet' : 'desktop'
   const is_valid = !/bot|crawler|spider|headless|phantom|selenium/i.test(ua)
 
+  // Get the translated event type, or fallback to 'view' if something weird happens
+  const backend_event_type = EVENT_MAP[event_type] || 'view'
+
   // Fire and forget — never await this
   apiFetch('/analytics/event', {
     method: 'POST',
     body: JSON.stringify({
-      event_type,
+      event_type: backend_event_type, // 🔴 Use the translated event type here!
       creator_id: creator_id ?? null,
       entity_id: prompt_id ?? null,
       entity_type: prompt_id ? 'prompt' : null,
       session_id,
       metadata: {
+        original_event: event_type, // We can still pass the original name in metadata!
         campaign_id: campaign_id ?? null,
         placement_id: placement_id ?? null,
         referrer,

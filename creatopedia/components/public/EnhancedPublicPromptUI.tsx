@@ -8,10 +8,6 @@ import { apiFetch } from '@/lib/api/client'
 import Link from 'next/link'
 import { InstagramVerifiedBadge } from '@/components/ui/InstagramVerifiedBadge'
 
-
-
-
-
 const InstagramIcon = ({ className }: { className?: string }) => (
   <svg
     viewBox="0 0 24 24"
@@ -36,8 +32,6 @@ import AdPopup from './AdPopup'
 import type { AdPlacementData } from './AdBanner'
 import type { InstagramUser, InstagramMedia } from '@/lib/instagram'
 import type { Creator, Prompt, Category } from '@/types'
-
-
 
 interface RelatedPromptType {
   id: string
@@ -109,19 +103,29 @@ export default function EnhancedPublicPromptUI({
     queryKey: ['related-prompts', creator.id, prompt.id],
     queryFn: async () => {
       if (!prompt.id) return []
-      const data = await apiFetch<RelatedPromptType[]>(
-        `/prompts?creator_id=${creator.id}&status=published`
-      )
-      return (data || []).filter((p) => p.id !== prompt.id).slice(0, 6)
+      try {
+        const rawData = await apiFetch<any>(`/prompts?creator_id=${creator.id}&status=published`)
+        let data: any[] = []
+        if (Array.isArray(rawData)) data = rawData
+        else if (rawData && typeof rawData === 'object') {
+          data = rawData.items || rawData.data || rawData.prompts || rawData.results || []
+        }
+        if (!Array.isArray(data)) data = []
+        return data.filter((p: any) => p.id !== prompt.id).slice(0, 6)
+      } catch (e) {
+        console.error("Failed related prompts", e)
+        return []
+      }
     },
-    initialData: relatedData,
+    initialData: Array.isArray(relatedData) ? relatedData : [],
     enabled: !!prompt.id,
     staleTime: 1000 * 60 * 5,
   })
 
   // Use the filtered list for rendering
   const finalRelatedData = useMemo(() => {
-    return (dynamicRelatedData || []).filter(p => p.id !== prompt.id)
+    const safeData = Array.isArray(dynamicRelatedData) ? dynamicRelatedData : []
+    return safeData.filter(p => p.id !== prompt.id)
   }, [dynamicRelatedData, prompt.id])
 
   const [libraryPrompts, setLibraryPrompts] = useState<Prompt[]>([])
@@ -143,24 +147,39 @@ export default function EnhancedPublicPromptUI({
       : igUser.follows_count
     : '1.1k'
 
-  useEffect(() => {
+  useEffect(() => { 
     async function fetchLibrary() {
       try {
-        const promptsData = await apiFetch<Prompt[]>(
-          `/prompts?creator_id=${creator.id}&status=published`
-        )
-        setLibraryPrompts(promptsData || [])
+        const rawData = await apiFetch<any>(`/prompts?creator_id=${creator.id}&status=published`)
+        
+        // BULLETPROOF EXTRACTION
+        let promptsArray: any[] = []
+        if (Array.isArray(rawData)) promptsArray = rawData
+        else if (rawData && typeof rawData === 'object') {
+          promptsArray = rawData.items || rawData.data || rawData.prompts || rawData.results || []
+        }
+        if (!Array.isArray(promptsArray)) promptsArray = []
+        
+        setLibraryPrompts(promptsArray)
 
         const categoryIds = [
-          ...new Set((promptsData || []).map((p) => p.category_id).filter(Boolean)),
+          ...new Set(promptsArray.map((p: any) => p.category_id).filter(Boolean)),
         ]
 
         if (categoryIds.length > 0) {
-          const catData = await apiFetch<Category[]>('/categories')
-          setCategories(catData.filter((c) => categoryIds.includes(c.id)))
+          const catData = await apiFetch<any>('/categories')
+          let catArray: any[] = []
+          if (Array.isArray(catData)) catArray = catData
+          else if (catData && typeof catData === 'object') {
+            catArray = catData.items || catData.data || []
+          }
+          if (!Array.isArray(catArray)) catArray = []
+          
+          setCategories(catArray.filter((c: any) => categoryIds.includes(c.id)))
         }
       } catch (e) {
         console.error('Failed to fetch prompt library', e)
+        setLibraryPrompts([]) // Force empty array on error
       }
     }
 
@@ -170,13 +189,16 @@ export default function EnhancedPublicPromptUI({
   }, [creator.id])
 
   const activeCategoryIds = useMemo(() => {
-    const ids = new Set(libraryPrompts.map(p => p.category_id).filter(Boolean))
-    return categories.filter(c => ids.has(c.id))
+    const safePrompts = Array.isArray(libraryPrompts) ? libraryPrompts : []
+    const safeCategories = Array.isArray(categories) ? categories : []
+    const ids = new Set(safePrompts.map(p => p.category_id).filter(Boolean))
+    return safeCategories.filter(c => ids.has(c.id))
   }, [categories, libraryPrompts])
 
   const filteredLibraryPrompts = useMemo(() => {
-    if (!activeCategory) return libraryPrompts
-    return libraryPrompts.filter(p => p.category_id === activeCategory)
+    const safePrompts = Array.isArray(libraryPrompts) ? libraryPrompts : []
+    if (!activeCategory) return safePrompts
+    return safePrompts.filter(p => p.category_id === activeCategory)
   }, [libraryPrompts, activeCategory])
 
   const handleLibraryPromptClick = async (clickedPrompt: Prompt | RelatedPromptType) => {
@@ -189,13 +211,12 @@ export default function EnhancedPublicPromptUI({
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search)
       if (params.get('debug') === 'true') {
-        // eslint-disable-next-line react-hooks/set-state-in-effect
         setShowDebug(true)
       }
     }
   }, [])
 
-  const handlePromptClick = (clickedPrompt: RelatedPromptType) => {
+  const handlePromptClick = (clickedPrompt: RelatedPromptType | Prompt) => {
     window.scrollTo({ top: 0, behavior: 'smooth' })
 
     // Use Next.js router for proper navigation
@@ -212,7 +233,7 @@ export default function EnhancedPublicPromptUI({
     router.push(newPath)
   }
 
-  const toolColor = AI_TOOL_COLORS[prompt.ai_tool.split(',')[0].trim()] ?? '#6366f1'
+  const toolColor = AI_TOOL_COLORS[prompt.ai_tool?.split(',')[0].trim()] ?? '#6366f1'
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] pb-20 text-white select-none relative overflow-hidden">
@@ -285,8 +306,6 @@ export default function EnhancedPublicPromptUI({
                     )}
                   </div>
                 </div>
-
-
               </div>
 
               {/* Name and stats */}
@@ -427,7 +446,7 @@ export default function EnhancedPublicPromptUI({
                       className="inline-flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-wider px-3 py-1.5 rounded-full border bg-zinc-900/60 border-white/10 text-white/90 backdrop-blur-md"
                     >
                       <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: toolColor }} />
-                      AI Tool: {prompt.ai_tool}
+                      AI Tool: {prompt.ai_tool || 'AI'}
                     </span>
                     <span className="inline-flex items-center gap-1.5 text-[10px] font-mono tracking-wider px-3 py-1.5 rounded-full border bg-zinc-900/60 border-white/10 text-white/70">
                       Output: {prompt.output_type}
@@ -450,7 +469,7 @@ export default function EnhancedPublicPromptUI({
                 {/* Related Prompts Section */}
                 <div className="px-4 md:px-8 pb-12 bg-zinc-950/40 pt-8 border-t border-white/5">
                   <div className="w-full">
-                    {relatedData && relatedData.length > 0 && (
+                    {finalRelatedData && finalRelatedData.length > 0 && (
                       <RelatedPrompts
                         prompts={finalRelatedData}
                         subdomain={creator.subdomain}
@@ -536,7 +555,7 @@ export default function EnhancedPublicPromptUI({
                     }
                   >
                     {filteredLibraryPrompts.map(p => {
-                      const toolColor = AI_TOOL_COLORS[p.ai_tool.split(',')[0].trim()] ?? '#6366f1'
+                      const toolColor = AI_TOOL_COLORS[p.ai_tool?.split(',')[0].trim()] ?? '#6366f1'
                       const gate = GATE_LABELS[p.gate_type] ?? GATE_LABELS.open
 
                       if (viewMode === 'list') {
@@ -569,7 +588,7 @@ export default function EnhancedPublicPromptUI({
                                 <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
                                   <span className="inline-flex items-center gap-1 text-[8px] sm:text-[9px] font-mono uppercase tracking-widest px-2 py-0.5 sm:py-1 rounded-md border bg-zinc-900/75 border-white/10 text-white/95">
                                     <span className="w-1 h-1 rounded-full animate-pulse" style={{ background: toolColor }} />
-                                    {p.ai_tool?.split(',')[0].trim()}
+                                    {p.ai_tool?.split(',')[0].trim() || 'AI'}
                                   </span>
                                   {p.content_type === 'pdf' && (
                                     <span className="text-[8px] sm:text-[9px] font-bold px-1.5 py-0.5 bg-pink-600/20 text-pink-300 border border-pink-500/30 rounded-md font-mono uppercase tracking-wide">PDF</span>
@@ -631,8 +650,8 @@ export default function EnhancedPublicPromptUI({
                               className="inline-flex items-center gap-1 text-[8px] sm:text-[10px] font-mono uppercase tracking-widest px-2 py-1 sm:px-3 sm:py-1.5 rounded-full border bg-zinc-900/70 border-white/10 text-white/90 backdrop-blur-md"
                             >
                               <span className="w-1 h-1 rounded-full animate-pulse" style={{ background: toolColor }} />
-                              <span className="sm:hidden">{p.ai_tool?.split(',')[0].trim()}</span>
-                              <span className="hidden sm:inline">{p.ai_tool?.split(',')[0].trim()}</span>
+                              <span className="sm:hidden">{p.ai_tool?.split(',')[0].trim() || 'AI'}</span>
+                              <span className="hidden sm:inline">{p.ai_tool?.split(',')[0].trim() || 'AI'}</span>
                             </span>
 
                             <div className="flex gap-1 sm:gap-2">
@@ -656,11 +675,6 @@ export default function EnhancedPublicPromptUI({
                               <h3 className="text-base sm:text-2xl font-bold tracking-tight text-white/95 leading-tight select-none line-clamp-2">
                                 {p.title}
                               </h3>
-                              {/* {p.description && (
-                                <p className="text-[10px] sm:text-xs text-white/45 leading-relaxed line-clamp-2 font-light hidden sm:block">
-                                  {p.description}
-                                </p>
-                              )} */}
                             </div>
 
                             {/* Card footer */}
@@ -723,7 +737,6 @@ export default function EnhancedPublicPromptUI({
           </div>
         </div>
       )}
-      {/* Mini Footer for Trust & Compliance (Helps with TikTok/FB In-App Browsers) */}
       <footer className="mt-12 mb-8 px-6 text-center animate-in fade-in slide-in-from-bottom-2 duration-1000 delay-500">
         <div className="flex items-center justify-center gap-6 text-[10px] font-mono tracking-widest text-white/20 uppercase">
           <Link href="/privacy-policy" className="hover:text-white/40 transition-colors">Privacy</Link>

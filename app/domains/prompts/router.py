@@ -193,6 +193,11 @@ async def get_prompt_page(
     prompt = await services.get_prompt_by_id(db, prompt_id)
     resolve_prompt_content(prompt)
     is_owner = creator and creator.id == prompt.creator_id
+    
+    category_data = None
+    if prompt.category_id:
+        category_data = await db.get(Category, prompt.category_id)
+
     return schemas.PromptPageOut(
         id=prompt.id,
         title=prompt.title,
@@ -205,10 +210,9 @@ async def get_prompt_page(
         ai_tool=prompt.ai_tool,
         output_type=prompt.output_type,
         creator={"id": str(prompt.creator_id)},
-        category=prompt.category,
+        category=category_data,  # <-- Use the safely fetched category here!
         is_gated=prompt.gate_type != GateType.open and not is_owner,
     )
-
 @router.get("/categories", response_model=list[schemas.CategoryOut])
 async def list_categories(db: AsyncSession = Depends(get_db)):
     from sqlmodel import select

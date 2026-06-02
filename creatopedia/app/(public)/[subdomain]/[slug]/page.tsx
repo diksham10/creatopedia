@@ -25,88 +25,43 @@ interface AdPlacement extends Omit<AdPlacementData, 'position'> {
   }
 }
 
-export async function generateMetadata({ params }: Params): Promise<Metadata> {
-  const { subdomain, slug } = await params
-  const dbPortfolio = await getCachedCreator(subdomain)
-  if (!dbPortfolio) return { title: 'Not Found' }
+export async function generateMetadata({ params }: Params): Promise<Metadata> {  const { subdomain, slug } = await params
+  
+  // 1. Fetch data
+  const prompt = await getCachedPrompt(subdomain, slug)
+  const creator = await getCachedCreator(subdomain)
 
-  const prompt = await getCachedPrompt(dbPortfolio.subdomain, slug)
+  // 2. Handle 404s safely
+  if (!prompt || !creator) {
+    return { title: 'Prompt Not Found' }
+  }
 
-  if (!prompt) return { title: 'Not Found' }
-
-  const creator = dbPortfolio.creator
-  const brand_color = dbPortfolio.theme_color
-
+  // 3. Build metadata using the correct, flattened creator object!
+  const brand_color = creator.brand_color || '#6366f1'
   const title = `${prompt.title} | ${creator.name}`
-  const description = prompt.description ?? `Check out this ${prompt.ai_tool} prompt by ${creator.name}.`
+  const description = prompt.description ?? `Check out this ${prompt.ai_tool || 'awesome'} prompt by ${creator.name}.`
   
   // Robust base domain detection
-  const rawBaseDomain = process.env.NEXT_PUBLIC_BASE_DOMAIN || 'creatopedia.tech'
-  const baseDomain = rawBaseDomain.replace(/^https?:\/\//, '')
-  
-  // Construct URLs - Prefer SUBDOMAIN format for maximum compatibility (TikTok/social)
-  const shareUrl = `https://${subdomain}.${baseDomain}/${slug}`
-  
-  // Image prioritization: 
-  // 1. Explicit share image
-  // 2. Thumbnail
-  // 3. Fallback to the generated opengraph-image route
-  let ogImageUrl = prompt.share_image_url || prompt.thumbnail_url
-  
-  if (!ogImageUrl) {
-    // If no custom image, use the dynamic one. 
-    // We use the subdomain-based absolute URL to ensure consistency.
-    ogImageUrl = `https://${subdomain}.${baseDomain}/${slug}/opengraph-image`
-  } else if (!ogImageUrl.startsWith('http')) {
-    // Ensure relative URLs are made absolute (if any)
-    ogImageUrl = `https://${baseDomain}${ogImageUrl.startsWith('/') ? '' : '/'}${ogImageUrl}`
-  }
+  const protocol = process.env.NODE_ENV === 'development' ? 'http' : 'https'
+  const baseDomain = process.env.NEXT_PUBLIC_ROOT_DOMAIN || 'localhost:3000'
+  const ogUrl = `${protocol}://${subdomain}.${baseDomain}/${prompt.slug}/opengraph-image`
 
   return {
     title,
     description,
-    alternates: {
-      canonical: shareUrl,
-    },
     openGraph: {
       title,
       description,
-      url: shareUrl,
-      siteName: 'Creatopedia',
-      locale: 'en_US',
-      type: 'article', // Using article can sometimes help with rich previews
-      authors: [creator.name],
-      images: [
-        {
-          url: ogImageUrl,
-          width: 1200,
-          height: 630,
-          alt: title,
-          type: 'image/png', // Explicitly setting type helps WhatsApp
-        },
-      ],
+      images: [{ url: ogUrl, width: 1200, height: 630 }],
     },
     twitter: {
       card: 'summary_large_image',
       title,
       description,
-      images: [ogImageUrl],
-      creator: creator.handle || `@${subdomain}`,
-    },
-    robots: {
-      index: true,
-      follow: true,
-      googleBot: {
-        index: true,
-        follow: true,
-        'max-video-preview': -1,
-        'max-image-preview': 'large',
-        'max-snippet': -1,
-      },
+      images: [ogUrl],
     },
   }
 }
-
 export default async function PublicPromptPage({ params }: Params) {
   const { subdomain, slug } = await params
 

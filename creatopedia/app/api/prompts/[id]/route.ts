@@ -1,3 +1,4 @@
+// creatopedia/app/api/prompts/[id]/route.ts
 import { cookies } from 'next/headers'
 import { NextRequest, NextResponse } from 'next/server'
 import axios from 'axios'
@@ -7,92 +8,7 @@ import { Prompt } from '@/types'
 
 interface Params { params: Promise<{ id: string }> }
 
-async function readPromptPayload(req: NextRequest) {
-  const contentType = req.headers.get('content-type') ?? ''
-
-  if (contentType.includes('multipart/form-data')) {
-    const formData = await req.formData()
-    const payload: Record<string, any> = {}
-    formData.forEach((value, key) => {
-      if (typeof value === 'string') payload[key] = value
-    })
-    return { payload, formData }
-  }
-
-  return { payload: await req.json(), formData: null }
-}
-
-function normalizePromptPayload(body: Record<string, any>) {
-  const normalized: Record<string, any> = { ...body }
-
-  if (typeof normalized.price === 'string') {
-    const parsedPrice = Number.parseFloat(normalized.price)
-    normalized.price = Number.isFinite(parsedPrice) ? parsedPrice : undefined
-  }
-
-  if (typeof normalized.featured === 'string') {
-    normalized.featured = normalized.featured === 'true'
-  }
-
-  return normalized
-}
-
-function toFormBody(data: Record<string, any>) {
-  const form = new URLSearchParams()
-
-  Object.entries(data).forEach(([key, value]) => {
-    if (value === undefined || value === null || value === '') return
-    form.set(key, typeof value === 'boolean' ? String(value) : String(value))
-  })
-
-  return form
-}
-
-async function sendPromptForm(path: string, data: Record<string, any>, cookieHeader: string, method: 'PATCH' | 'DELETE') {
-  if (method === 'DELETE') {
-    const response = await fetch(`${API_BASE_URL.replace(/\/$/, '')}${path}`, {
-      method,
-      headers: { cookie: cookieHeader },
-    })
-
-    if (!response.ok) {
-      const errorText = await response.text()
-      throw new Error(errorText || 'Request failed')
-    }
-
-    if (response.status === 204) {
-      return null
-    }
-
-    return response.json()
-  }
-
-  const response = await fetch(`${API_BASE_URL.replace(/\/$/, '')}${path}`, {
-    method,
-    headers: {
-      cookie: cookieHeader,
-      'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
-    },
-    body: toFormBody(data),
-  })
-
-  if (!response.ok) {
-    const errorText = await response.text()
-    throw new Error(errorText || 'Request failed')
-  }
-
-  if (response.status === 204) {
-    return null
-  }
-
-  return response.json()
-}
-
-async function getPromptAndVerifyOwner(id: string): Promise<{
-  user: any | null,
-  prompt: Prompt | null,
-  unauthorized: boolean
-}> {
+async function getPromptAndVerifyOwner(id: string) {
   const cookieStore = await cookies()
   const cookieHeader = cookieStore.get('next-auth.session-token')?.value || ''
 
@@ -128,53 +44,54 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   const { user, prompt, unauthorized } = await getPromptAndVerifyOwner(id)
   if (unauthorized || !user || !prompt) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-  const { payload, formData } = await readPromptPayload(req)
-  console.log('=== PATCH /prompts/[id] ===')
-  console.log('Received payload:', payload)
-  console.log('Has formData:', !!formData)
-  if (formData) {
-    console.log('FormData entries:')
-    const entries: Record<string, any> = {}
-    formData.forEach((value, key) => {
-      entries[key] = value instanceof File ? `[File: ${value.name}]` : value
-    })
-    console.log(entries)
-  }
-  
-  const normalizedBody = normalizePromptPayload(payload)
-  console.log('After normalization:', normalizedBody)
-
   try {
+    const contentType = req.headers.get('content-type') || ''
     const cookieHeader = (await cookies()).get('next-auth.session-token')?.value || ''
-    let data
+    let response: Response
 
-    if (formData) {
-      const body = new FormData()
-      formData.forEach((value, key) => {
-        body.append(key, value)
-      })
-      Object.entries(normalizedBody).forEach(([key, value]) => {
-        if (value === undefined || value === null || value === '') return
-        body.set(key, typeof value === 'boolean' ? String(value) : String(value))
+    if (contentType.includes('application/json')) {
+      // 1. DASHBOARD TOGGLE: Next.js drops FormData, so we force it into a strict URL string
+      const jsonBody = await req.json()
+      const urlParams = new URLSearchParams()
+      Object.entries(jsonBody).forEach(([key, value]) => {
+        if (value !== undefined && value !== null && value !== '') {
+          urlParams.append(key, String(value))
+        }
       })
 
-      const response = await fetch(`${API_BASE_URL.replace(/\/$/, '')}/prompts/${id}`, {
+      response = await fetch(`${API_BASE_URL.replace(/\/$/, '')}/prompts/${id}`, {
         method: 'PATCH',
-        headers: { cookie: cookieHeader },
-        body,
+        headers: {
+          'Cookie': cookieHeader,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: urlParams.toString(), // <-- .toString() makes it impossible for Next.js to drop the body
       })
 
-      if (!response.ok) {
-        const errorText = await response.text()
-        throw new Error(errorText || 'Request failed')
-      }
+    } else if (contentType.includes('multipart/form-data')) {
+      // 2. MAIN FORM: We bypass Next.js parsers completely and pipe the raw stream to FastAPI
+      response = await fetch(`${API_BASE_URL.replace(/\/$/, '')}/prompts/${id}`, {
+        method: 'PATCH',
+        headers: {
+          'Cookie': cookieHeader,
+          'Content-Type': contentType, // MUST keep the original boundary from the browser
+        },
+        body: req.body, // <-- RAW STREAM!
+        duplex: 'half',
+      } as RequestInit)
 
-      data = await response.json()
     } else {
-      data = await sendPromptForm(`/prompts/${id}`, normalizedBody, cookieHeader, 'PATCH')
+      throw new Error('Unsupported content type')
     }
 
-    // Invalidate cache tags
+    if (!response.ok) {
+      const errorText = await response.text()
+      throw new Error(errorText || 'Failed to update prompt')
+    }
+
+    const data = await response.json()
+
+    // Revalidate caches
     revalidateTag(`prompt-${user.id}-${data.slug}`, 'max')
     revalidateTag(`prompts-list-${user.id}`, 'max')
 
@@ -182,20 +99,14 @@ export async function PATCH(req: NextRequest, { params }: Params) {
       revalidateTag(`prompt-${user.id}-${prompt.slug}`, 'max')
     }
 
-    // Revalidate public paths using user's subdomain
     try {
-      const profileResp = await axios.get(`${API_BASE_URL.replace(/\/$/, '')}/users/me/profile`, { headers: { cookie: cookieHeader } })
-      const creator = profileResp.data
-      if (creator && creator.subdomain) {
-        const revalidateUrl = `/${creator.subdomain}/${data.slug}`
-        revalidatePath(revalidateUrl)
+      if (user.subdomain) {
+        revalidatePath(`/${user.subdomain}/${data.slug}`)
         if (prompt.slug !== data.slug) {
-          revalidatePath(`/${creator.subdomain}/${prompt.slug}`)
+          revalidatePath(`/${user.subdomain}/${prompt.slug}`)
         }
       }
     } catch {}
-
-    // If newly published, ensure backend page record exists (backend handles this)
 
     return NextResponse.json(data)
   } catch (e) {
@@ -211,7 +122,13 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
 
   try {
     const cookieHeader = (await cookies()).get('next-auth.session-token')?.value || ''
-    await sendPromptForm(`/prompts/${id}`, {}, cookieHeader, 'DELETE')
+    
+    const response = await fetch(`${API_BASE_URL.replace(/\/$/, '')}/prompts/${id}`, {
+      method: 'DELETE',
+      headers: { cookie: cookieHeader },
+    })
+
+    if (!response.ok) throw new Error('Failed to delete prompt')
 
     revalidateTag(`prompt-${prompt.creator_id}-${prompt.slug}`, 'max')
     revalidateTag(`prompts-list-${prompt.creator_id}`, 'max')
