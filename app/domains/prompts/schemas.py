@@ -14,7 +14,7 @@ class CategoryOut(BaseModel):
 
 class PromptCreate(BaseModel):
     title: str
-    content: str
+    content: str = ""            # optional here — router fills it in before construction
     content_type: ContentType = ContentType.text
     description: Optional[str] = None
     price: Optional[float] = None

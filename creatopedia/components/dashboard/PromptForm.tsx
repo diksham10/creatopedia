@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Link as LinkIcon, Sparkles, Loader2 as LoaderIcon, Plus, Trash2 } from 'lucide-react'
-import { apiFetch } from '@/lib/api/client'
+import { apiFetch, uploadFile } from '@/lib/api/client'
 import type { Prompt, Category } from '@/types'
 import InstagramPostPicker, { type InstagramPost } from './InstagramPostPicker'
 
@@ -99,20 +99,15 @@ export default function PromptForm({ defaultValues, promptId, onSuccess }: Props
     const file = e.target.files?.[0]
     if (!file) return
     setUploading(true)
-    const fd = new FormData()
-    fd.append('file', file)
+    setServerError(null)
     try {
-      const data = await apiFetch<{ url?: string; error?: string }>('/upload', { method: 'POST', body: fd })
-      setUploading(false)
-      if (data.url) {
-        if (isShareImage) setShareImageUrl(data.url)
-        else setThumbnailUrl(data.url)
-      } else {
-        setServerError(data.error ?? 'Upload failed')
-      }
+      const url = await uploadFile(file)
+      if (isShareImage) setShareImageUrl(url)
+      else setThumbnailUrl(url)
     } catch (err: any) {
+      setServerError(err.message || 'Upload failed')
+    } finally {
       setUploading(false)
-      setServerError(err.message)
     }
   }
 
@@ -120,20 +115,15 @@ export default function PromptForm({ defaultValues, promptId, onSuccess }: Props
     const file = e.target.files?.[0]
     if (!file) return
     setUploadingPdf(true)
-    const fd = new FormData()
-    fd.append('file', file)
+    setServerError(null)
     try {
-      const data = await apiFetch<{ url?: string; error?: string }>('/upload/pdf', { method: 'POST', body: fd })
-      setUploadingPdf(false)
-      if (data.url) {
-        setPdfUrl(data.url)
-        if (content === '') setContent('See attached PDF for instructions.')
-      } else {
-        setServerError(data.error ?? 'Upload failed')
-      }
+      const url = await uploadFile(file)
+      setPdfUrl(url)
+      if (content === '') setContent('See attached PDF for instructions.')
     } catch (err: any) {
+      setServerError(err.message || 'Upload failed')
+    } finally {
       setUploadingPdf(false)
-      setServerError(err.message)
     }
   }
 

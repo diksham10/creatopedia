@@ -61,6 +61,12 @@ async def update_creator(
     creator_data = {k: v for k, v in update_data.items() if k not in portfolio_fields}
     portfolio_data = {k: v for k, v in update_data.items() if k in portfolio_fields}
 
+    # Track old avatar to delete if it is being replaced
+    old_avatar_to_delete = None
+    if "avatar_url" in creator_data and creator_data.get("avatar_url") is not None:
+        if creator.avatar_url and creator.avatar_url != creator_data.get("avatar_url"):
+            old_avatar_to_delete = creator.avatar_url
+
     # Update creator table
     # If subdomain is being updated, validate similarly
     if "subdomain" in creator_data and creator_data.get("subdomain") is not None:
@@ -108,6 +114,12 @@ async def update_creator(
 
     await db.commit()
     await db.refresh(creator)
+
+    # Clean up old avatar from B2 storage
+    if old_avatar_to_delete:
+        from app.core.storage import delete_file_by_url
+        delete_file_by_url(old_avatar_to_delete)
+
     return creator
 
 

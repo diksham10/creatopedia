@@ -95,3 +95,28 @@ export async function clearTokens(): Promise<void> {
     // Best-effort: even if network fails, UI will still redirect to /login.
   }
 }
+
+/**
+ * Unified client-side file upload using the Next.js server-side upload route.
+ * The server handles the presign request and PUT to B2 to avoid CORS/403 issues.
+ * Handles images, PDFs, and videos.
+ */
+export async function uploadFile(file: File): Promise<string> {
+  const fd = new FormData()
+  fd.append('file', file)
+
+  const response = await fetch('/api/upload', {
+    method: 'POST',
+    body: fd,
+    credentials: 'include',
+  })
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ error: 'Upload failed' }))
+    throw new Error(err.error || `Upload failed with status ${response.status}`)
+  }
+
+  const data = await response.json()
+  if (!data.url) throw new Error('Upload succeeded but no URL was returned')
+  return data.url
+}

@@ -5,12 +5,14 @@
 import uuid
 import mimetypes
 import boto3
+import logging
 from botocore.exceptions import ClientError
 from fastapi import UploadFile
 
 from app.core.config import get_settings
 
 settings = get_settings()
+logger = logging.getLogger("uvicorn.error")
 
 # ── Single shared B2 client ────────────────────────────────────────────────────
 b2_client = boto3.client(
@@ -27,95 +29,117 @@ MAX_IMAGE_SIZE = 5  * 1024 * 1024   # 5 MB
 MAX_PDF_SIZE   = 20 * 1024 * 1024   # 20 MB
 
 
-# ── Generic file-object upload (used by prompts router) ───────────────────────
-async def upload_file_to_b2(file_obj, filename: str, content_type: str) -> str:
-    """
-    Upload a raw file-like object to Backblaze B2.
-    Returns the object key (stored path), NOT a public URL.
-    """
-    ext = filename.rsplit(".", 1)[-1] if "." in filename else ""
-    unique_filename = f"{uuid.uuid4()}.{ext}"
-    object_key = f"prompts/pdfs/{unique_filename}"
-
-    try:
-        b2_client.upload_fileobj(
-            file_obj,
-            settings.B2_BUCKET_NAME,
-            object_key,
-            ExtraArgs={"ContentType": content_type},
-        )
-        return object_key
-    except ClientError as e:
-        raise Exception(f"Failed to upload to Backblaze B2: {str(e)}")
-
-
 # ── Presigned URL generation ───────────────────────────────────────────────────
 def generate_presigned_url(object_key: str, expiration: int = 3600) -> str:
     """
-    Generate a time-limited presigned URL for a private B2 object.
+    Generate a presigned GET URL for fetching private objects.
     """
     try:
-        return b2_client.generate_presigned_url(
+        url = b2_client.generate_presigned_url(
             "get_object",
             Params={"Bucket": settings.B2_BUCKET_NAME, "Key": object_key},
             ExpiresIn=expiration,
         )
+        return url
     except ClientError as e:
-        raise Exception(f"Failed to generate presigned URL: {str(e)}")
+        logger.error(f"[STORAGE] Failed to generate presigned GET URL for key {object_key}: {str(e)}")
+        raise Exception(f"Failed to generate presigned GET URL: {str(e)}")
 
 
-# ── Image upload (used by uploads domain) ─────────────────────────────────────
-async def upload_image(file: UploadFile, folder: str = "images") -> str:
+def generate_presigned_upload_url(object_key: str, content_type: str, expiration: int = 3600) -> str:
     """
-    Validate and upload an image to B2. Returns the public CDN URL.
+    Generate a presigned PUT URL for client-side direct uploads.
     """
-    from app.common.exceptions import BadRequestError
+    logger.info(f"[STORAGE] Generating presigned upload URL for key: {object_key} (ContentType: {content_type})")
+    try:
+        url = b2_client.generate_presigned_url(
+            "put_object",
+            Params={
+                "Bucket": settings.B2_BUCKET_NAME,
+                "Key": object_key,
+                "ContentType": content_type,
+            },
+            ExpiresIn=expiration,
+        )
+        return url
+    except ClientError as e:
+        logger.error(f"[STORAGE] Failed to generate presigned upload URL for key {object_key}: {str(e)}")
+        raise Exception(f"Failed to generate presigned upload URL: {str(e)}")
 
-    content = await file.read()
-    if len(content) > MAX_IMAGE_SIZE:
-        raise BadRequestError("Image exceeds 5 MB limit")
 
-    mime = file.content_type or mimetypes.guess_type(file.filename or "")[0]
-    if mime not in ALLOWED_IMAGE_TYPES:
-        raise BadRequestError(f"Unsupported image type: {mime}")
 
-    ext = file.filename.rsplit(".", 1)[-1] if file.filename else "jpg"
-    key = f"{folder}/{uuid.uuid4()}.{ext}"
-
+def direct_upload_to_b2(object_key: str, data: bytes, content_type: str) -> None:
+    """
+    Upload bytes directly to Backblaze B2 using put_object.
+    Used when presigned URLs are blocked (bucket requires authentication).
+    """
+    logger.info(f"[STORAGE] Direct upload to B2: {object_key} ({content_type}, {len(data)} bytes)")
     try:
         b2_client.put_object(
             Bucket=settings.B2_BUCKET_NAME,
-            Key=key,
-            Body=content,
-            ContentType=mime,
+            Key=object_key,
+            Body=data,
+            ContentType=content_type,
         )
+        logger.info(f"[STORAGE] ✓ Direct upload succeeded: {object_key}")
     except ClientError as e:
-        raise Exception(f"Failed to upload image to Backblaze B2: {str(e)}")
+        logger.error(f"[STORAGE] Direct upload failed for {object_key}: {str(e)}")
+        raise Exception(f"Failed to upload file: {str(e)}")
 
-    return f"{settings.B2_PUBLIC_URL}/{key}"
 
-
-# ── PDF upload (used by uploads domain) ───────────────────────────────────────
-async def upload_pdf(file: UploadFile, folder: str = "pdfs") -> str:
+def delete_object_from_b2(object_key: str) -> None:
     """
-    Validate and upload a PDF to B2. Returns the public CDN URL.
+    Delete an object from Backblaze B2/S3.
     """
-    from app.common.exceptions import BadRequestError
-
-    content = await file.read()
-    if len(content) > MAX_PDF_SIZE:
-        raise BadRequestError("PDF exceeds 20 MB limit")
-
-    key = f"{folder}/{uuid.uuid4()}.pdf"
-
+    logger.info(f"[STORAGE] Attempting to delete object from B2: {object_key}")
     try:
-        b2_client.put_object(
+        b2_client.delete_object(
             Bucket=settings.B2_BUCKET_NAME,
-            Key=key,
-            Body=content,
-            ContentType="application/pdf",
+            Key=object_key,
         )
+        logger.info(f"[STORAGE] Successfully deleted object from B2: {object_key}")
     except ClientError as e:
-        raise Exception(f"Failed to upload PDF to Backblaze B2: {str(e)}")
+        logger.error(f"[STORAGE] Failed to delete object {object_key} from Backblaze B2: {str(e)}")
 
-    return f"{settings.B2_PUBLIC_URL}/{key}"
+
+def delete_file_by_url(url: str) -> None:
+    """
+    Given a URL or key, extract the B2 object key and delete the file.
+    """
+    if not url:
+        return
+    
+    logger.info(f"[STORAGE] Request to delete file by URL/key: {url}")
+    
+    # If the URL is already an object key (doesn't start with http/https)
+    if not url.startswith("http"):
+        delete_object_from_b2(url)
+        return
+
+    # Check if it starts with the public B2 base URL
+    if settings.B2_PUBLIC_URL and url.startswith(settings.B2_PUBLIC_URL):
+        key = url[len(settings.B2_PUBLIC_URL):].lstrip("/")
+        delete_object_from_b2(key)
+        return
+
+    # Fallback path parser
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        path = parsed.path.lstrip("/")
+        
+        # Check standard /file/<bucket>/ prefix
+        if path.startswith("file/"):
+            parts = path.split("/", 2)
+            if len(parts) >= 3:
+                delete_object_from_b2(parts[2])
+                return
+                
+        # Check if B2 bucket name is in path
+        if settings.B2_BUCKET_NAME in path:
+            parts = path.split(settings.B2_BUCKET_NAME + "/", 1)
+            if len(parts) == 2:
+                delete_object_from_b2(parts[1])
+                return
+    except Exception as e:
+        logger.error(f"[STORAGE] Failed to parse URL {url} for deletion: {str(e)}")

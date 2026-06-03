@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import type { Creator } from '@/types'
+import { uploadFile } from '@/lib/api/client'
 import InstagramIntegration from './InstagramIntegration'
 
 interface Props {
@@ -30,17 +31,13 @@ export default function SettingsForm({ defaultValues, section }: Props) {
 
     setUploading(true)
     setError(null)
-    const body = new FormData()
-    body.append('file', file)
 
     try {
-      const res = await fetch('/api/upload', { method: 'POST', body })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Upload failed')
-      setFormData(prev => ({ ...prev, avatar_url: data.url }))
+      const url = await uploadFile(file)
+      setFormData(prev => ({ ...prev, avatar_url: url }))
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (err: any) {
-      setError(err.message)
+      setError(err.message || 'Upload failed')
     } finally {
       setUploading(false)
     }

@@ -1,17 +1,14 @@
 # app/domains/users/router.py
-from fastapi import APIRouter, Depends, UploadFile, File
+from fastapi import APIRouter, Depends
 from sqlmodel.ext.asyncio.session import AsyncSession
 from app.core.database import get_db
 from app.core.security import get_current_creator, get_password_hash
 from app.core.storage import generate_presigned_url
 from app.domains.users import schemas, services
 from app.domains.users.models import Creator
-from app.domains.uploads import services as upload_services
 from app.common.exceptions import BadRequestError
 import uuid
-import mimetypes
 from app.core.config import settings
-from app.core.storage import b2_client
 
 router = APIRouter(prefix="/users/me", tags=["Users (Me)"])
 
@@ -46,30 +43,6 @@ async def update_profile(
     updated = await services.update_creator(db, creator, data)
     return append_presigned_avatar(updated)
 
-@router.post("/avatar", response_model=schemas.CreatorPublic)
-async def upload_avatar(
-    file: UploadFile = File(...),
-    creator: Creator = Depends(get_current_creator),
-    db: AsyncSession = Depends(get_db),
-):
-    """Upload or update profile avatar directly to B2"""
-    allowed_types = ['image/jpeg', 'image/png', 'image/webp']
-    if file.content_type not in allowed_types:
-        raise BadRequestError("Only JPEG, PNG and WEBP images are allowed")
-
-    content = await file.read()
-    ext = mimetypes.guess_extension(file.content_type) or '.jpg'
-    filename = f"avatars/{creator.id}-{uuid.uuid4()}{ext}"
-
-    url = await upload_services.upload_file_b2(filename, content, file.content_type)
-    
-    # Update creator profile
-    creator.avatar_url = url
-    db.add(creator)
-    await db.commit()
-    await db.refresh(creator)
-    
-    return creator
 
 @router.put("/email", response_model=schemas.CreatorPublic)
 async def update_email(

@@ -1,6 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server'
-import axios from 'axios'
-import FormData from 'form-data'
 import { cookies } from 'next/headers'
 import { API_BASE_URL } from '@/lib/api/config'
 
@@ -9,16 +7,6 @@ const MAX_SIZE = 20 * 1024 * 1024 // 20MB
 export async function POST(req: NextRequest) {
   const cookieStore = await cookies()
   const cookieHeader = cookieStore.get('next-auth.session-token')?.value || ''
-
-  // Verify user by asking backend profile endpoint (backend will validate session cookie)
-  let user: any = null
-  try {
-    const profile = await axios.get(`${API_BASE_URL.replace(/\/$/, '')}/users/me/profile`, { headers: { cookie: cookieHeader } })
-    user = profile.data
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  } catch (e) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
 
   const formData = await req.formData()
   const file = formData.get('file') as File | null
@@ -31,23 +19,37 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'File too large. Max 20MB.' }, { status: 400 })
   }
 
-  const crypto = await import('crypto')
-  const uuid = crypto.randomUUID()
-  const path = `pdfs/${user.id}/${uuid}.pdf`
   const buffer = Buffer.from(await file.arrayBuffer())
 
   try {
-    const form = new FormData()
-    form.append('file', buffer, { filename: path })
+    // Construct standard FormData to forward the file to the python backend
+    const fd = new FormData()
+    const blob = new Blob([buffer], { type: file.type })
+    fd.append('file', blob, file.name)
 
-    const headers: any = { ...form.getHeaders() }
-    const cookieHeader = (await cookies()).get('next-auth.session-token')?.value || ''
-    if (cookieHeader) headers.cookie = cookieHeader
+    const backendUrl = `${API_BASE_URL.replace(/\/$/, '')}/upload/file`
+    console.log(`[Upload PDF API] Forwarding upload to backend: ${backendUrl}`)
 
-    const resp = await axios.post(`${API_BASE_URL.replace(/\/$/, '')}/upload/pdf`, form, { headers })
-    return NextResponse.json(resp.data)
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e)
+    const response = await fetch(backendUrl, {
+      method: 'POST',
+      headers: {
+        ...(cookieHeader ? { cookie: `next-auth.session-token=${cookieHeader}` } : {}),
+      },
+      body: fd,
+    })
+
+    if (!response.ok) {
+      const errText = await response.text()
+      console.error(`[Upload PDF API] Backend upload failed: status=${response.status} body=${errText}`)
+      return NextResponse.json({ error: `Upload failed: ${errText}` }, { status: response.status })
+    }
+
+    const data = await response.json()
+    console.log(`[Upload PDF API] ✓ PDF upload succeeded. Public URL: ${data.url}`)
+    return NextResponse.json({ url: data.url })
+  } catch (e: any) {
+    const msg = e.message || String(e)
+    console.error(`[Upload PDF API] Exception in upload forwarding: ${msg}`)
     return NextResponse.json({ error: `Upload failed: ${msg}` }, { status: 500 })
   }
 }

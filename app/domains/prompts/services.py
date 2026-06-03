@@ -86,6 +86,15 @@ async def update_prompt(
     content_to_validate = data.content if data.content else prompt.content
     validate_content_type(content_type_to_validate, content_to_validate)
 
+    # Track old files to delete if they are replaced with new values
+    old_pdf_to_delete = None
+    if data.content and prompt.content_type == ContentType.pdf and prompt.content != data.content:
+        old_pdf_to_delete = prompt.content
+        
+    old_thumbnail_to_delete = None
+    if data.thumbnail_url and prompt.thumbnail_url and prompt.thumbnail_url != data.thumbnail_url:
+        old_thumbnail_to_delete = prompt.thumbnail_url
+
     for field, value in data.model_dump(exclude_unset=True).items():
         setattr(prompt, field, value)
     prompt.touch()
@@ -93,6 +102,15 @@ async def update_prompt(
     db.add(prompt)
     await db.commit()
     await db.refresh(prompt)
+
+    # Clean up replaced files from storage
+    if old_pdf_to_delete or old_thumbnail_to_delete:
+        from app.core.storage import delete_file_by_url
+        if old_pdf_to_delete:
+            delete_file_by_url(old_pdf_to_delete)
+        if old_thumbnail_to_delete:
+            delete_file_by_url(old_thumbnail_to_delete)
+
     return prompt
 
 async def delete_prompt(
@@ -101,8 +119,21 @@ async def delete_prompt(
     prompt = await get_prompt_by_id(db, prompt_id)
     if prompt.creator_id != creator.id:
         raise ForbiddenError()
+    
+    # Store references to fields before deletion
+    content = prompt.content
+    content_type = prompt.content_type
+    thumbnail_url = prompt.thumbnail_url
+
     await db.delete(prompt)
     await db.commit()
+
+    # Clean up physical files from B2 storage
+    from app.core.storage import delete_file_by_url
+    if content_type == ContentType.pdf and content:
+        delete_file_by_url(content)
+    if thumbnail_url:
+        delete_file_by_url(thumbnail_url)
 
 # Make sure to import the Prompt model at the top of your file if it's not already there!
 from app.domains.prompts.models import Prompt

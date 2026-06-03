@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import type { AdCampaign, AdCampaignStatus, AdPlacementPosition } from '@/types'
+import { uploadFile } from '@/lib/api/client'
 import PromptPlacementDesigner from './PromptPlacementDesigner'
 
 const inputCls = 'w-full px-4 py-3 rounded-xl bg-zinc-800 border border-zinc-700 text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all text-sm'
@@ -88,15 +89,14 @@ export default function AdCampaignForm({
     const file = e.target.files?.[0]
     if (!file) return
     setUploading(true)
-    const fd = new FormData()
-    fd.append('file', file)
-    const res = await fetch('/api/upload', { method: 'POST', body: fd }) // Reusing existing image upload
-    const data = await res.json()
-    setUploading(false)
-    if (data.url) {
-      setBannerUrl(data.url)
-    } else {
-      setServerError(data.error ?? 'Upload failed')
+    setServerError(null)
+    try {
+      const url = await uploadFile(file)
+      setBannerUrl(url)
+    } catch (err: any) {
+      setServerError(err.message || 'Upload failed')
+    } finally {
+      setUploading(false)
     }
   }
 

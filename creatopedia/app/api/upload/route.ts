@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
-import axios from 'axios'
-import FormData from 'form-data'
 import { API_BASE_URL } from '@/lib/api/config'
 
-const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp']
-const MAX_SIZE = 5 * 1024 * 1024 // 5MB
+const ALLOWED_TYPES = [
+  'image/jpeg', 'image/png', 'image/webp', 'image/gif',
+  'application/pdf',
+  'video/mp4', 'video/webm', 'video/ogg', 'video/quicktime'
+]
+const MAX_SIZE = 50 * 1024 * 1024 // 50MB
 
 export async function POST(req: NextRequest) {
   const formData = await req.formData()
@@ -17,20 +19,20 @@ export async function POST(req: NextRequest) {
 
   let buffer: Buffer
   let contentType: string
-  let ext = 'jpg'
+  let filename: string
 
   if (file) {
     if (!ALLOWED_TYPES.includes(file.type)) {
-      return NextResponse.json({ error: 'Invalid file type. Use JPEG, PNG, or WebP.' }, { status: 400 })
+      return NextResponse.json({ error: `Invalid file type: ${file.type}.` }, { status: 400 })
     }
     if (file.size > MAX_SIZE) {
-      return NextResponse.json({ error: 'File too large. Max 5MB.' }, { status: 400 })
+      return NextResponse.json({ error: 'File too large. Max 50MB.' }, { status: 400 })
     }
-    ext = file.name.split('.').pop() ?? 'jpg'
+    filename = file.name
     contentType = file.type
     buffer = Buffer.from(await file.arrayBuffer())
   } else {
-    // Fetch image from URL
+    // Fetch from URL
     try {
       console.log(`[Upload API] Downloading image from URL: ${url}`)
       const response = await fetch(url!)
@@ -39,10 +41,10 @@ export async function POST(req: NextRequest) {
       }
       contentType = response.headers.get('content-type') || 'image/jpeg'
       if (!ALLOWED_TYPES.includes(contentType)) {
-        // Fallback to standard jpeg type
         contentType = 'image/jpeg'
       }
-      ext = contentType.split('/').pop() ?? 'jpg'
+      const ext = contentType.split('/').pop() ?? 'jpg'
+      filename = `downloaded.${ext}`
       buffer = Buffer.from(await response.arrayBuffer())
     } catch (e) {
       const errorMessage = e instanceof Error ? e.message : String(e)
@@ -50,23 +52,39 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const filename = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
-
   try {
-    const form = new FormData()
-    form.append('file', buffer, { filename })
-
-    const headers: any = { ...form.getHeaders() }
     const cookieHeader = req.headers.get('cookie')
-    if (cookieHeader) headers.cookie = cookieHeader
-    
     const authHeader = req.headers.get('authorization')
-    if (authHeader) headers.authorization = authHeader
 
-    const resp = await axios.post(`${API_BASE_URL.replace(/\/$/, '')}/upload`, form, { headers })
-    return NextResponse.json(resp.data)
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e)
+    // Construct standard FormData to forward the file to the python backend
+    const fd = new FormData()
+    const blob = new Blob([buffer], { type: contentType })
+    fd.append('file', blob, filename)
+
+    const backendUrl = `${API_BASE_URL.replace(/\/$/, '')}/upload/file`
+    console.log(`[Upload API] Forwarding upload to backend: ${backendUrl}`)
+
+    const response = await fetch(backendUrl, {
+      method: 'POST',
+      headers: {
+        ...(cookieHeader ? { cookie: cookieHeader } : {}),
+        ...(authHeader ? { authorization: authHeader } : {}),
+      },
+      body: fd,
+    })
+
+    if (!response.ok) {
+      const errText = await response.text()
+      console.error(`[Upload API] Backend upload failed: status=${response.status} body=${errText}`)
+      return NextResponse.json({ error: `Upload failed: ${errText}` }, { status: response.status })
+    }
+
+    const data = await response.json()
+    console.log(`[Upload API] ✓ Upload succeeded. Public URL: ${data.url}`)
+    return NextResponse.json({ url: data.url })
+  } catch (e: any) {
+    const msg = e.message || String(e)
+    console.error(`[Upload API] Exception in upload forwarding: ${msg}`)
     return NextResponse.json({ error: `Upload failed: ${msg}` }, { status: 500 })
   }
 }
