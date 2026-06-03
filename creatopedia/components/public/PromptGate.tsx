@@ -9,6 +9,20 @@ const PdfViewer = dynamic(() => import('./PdfViewer'), { ssr: false })
 import CopyButton from './CopyButton'
 import { trackEmailSubmit } from '@/lib/analytics'
 import { Download, FileText } from 'lucide-react'
+import { API_BASE_URL } from '@/lib/api/config'
+
+function getProxiedUrl(url: string): string {
+  if (!url) return ''
+  if (url.includes('/api/upload/media/')) return url
+
+  // Match raw B2 URL (contains backblazeb2.com and has a creators/ folder path)
+  const creatorsMatch = url.match(/creators\/.+$/)
+  if (creatorsMatch && url.includes('backblazeb2.com')) {
+    const objectKey = creatorsMatch[0]
+    return `${API_BASE_URL.replace(/\/$/, '')}/upload/media/${objectKey}`
+  }
+  return url
+}
 
 interface Props {
   prompt: Prompt
@@ -159,16 +173,19 @@ export default function PromptGate({ prompt }: Props) {
   )
 }
 
-function PdfPlaceholder({ prompt }: { prompt: Prompt }) {
+function PdfPlaceholder({ prompt, pdfUrl }: { prompt: Prompt; pdfUrl?: string }) {
   const [fileSize, setFileSize] = useState<string | null>(null)
+  const [showViewer, setShowViewer] = useState(false)
 
-  const filename = prompt.pdf_url
-    ? decodeURIComponent(prompt.pdf_url.split('/').pop()?.split('?')[0] ?? `${prompt.title}.pdf`)
+  const actualPdfUrl = getProxiedUrl(pdfUrl || prompt.pdf_url || (prompt.content_type === 'pdf' ? prompt.content : '') || '')
+
+  const filename = actualPdfUrl
+    ? decodeURIComponent(actualPdfUrl.split('/').pop()?.split('?')[0] ?? `${prompt.title}.pdf`)
     : `${prompt.title}.pdf`
 
   useEffect(() => {
-    if (!prompt.pdf_url) return
-    fetch(prompt.pdf_url, { method: 'HEAD' })
+    if (!actualPdfUrl) return
+    fetch(actualPdfUrl, { method: 'HEAD' })
       .then((res: Response) => {
         const bytes = parseInt(res.headers.get('content-length') ?? '0', 10)
         if (bytes > 0) {
@@ -178,7 +195,44 @@ function PdfPlaceholder({ prompt }: { prompt: Prompt }) {
         }
       })
       .catch(() => null)
-  }, [prompt.pdf_url])
+  }, [actualPdfUrl])
+
+  if (showViewer) {
+    return (
+      <div className="relative rounded-2xl overflow-hidden shadow-2xl border border-zinc-700/60 flex flex-col bg-zinc-950">
+        {/* Header bar */}
+        <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800 bg-zinc-900/80 backdrop-blur-sm">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowViewer(false)}
+              className="text-xs font-semibold text-zinc-400 hover:text-white px-2.5 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700/50 hover:bg-zinc-700 transition-all cursor-pointer"
+            >
+              ← Back
+            </button>
+            <span className="ml-2 text-xs font-bold text-zinc-300 truncate max-w-[200px] sm:max-w-md">
+              {filename}
+            </span>
+          </div>
+          <a
+            href={actualPdfUrl || '#'}
+            download={filename}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-white text-xs font-bold transition-all active:scale-95 shadow cursor-pointer"
+            style={{ background: 'var(--brand, #6366f1)' }}
+          >
+            <Download className="w-3 h-3" />
+            Download PDF
+          </a>
+        </div>
+
+        {/* PDF Viewer */}
+        <div className="w-full">
+          <PdfViewer url={actualPdfUrl} />
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="relative rounded-2xl overflow-hidden shadow-2xl border border-zinc-700/60">
@@ -193,7 +247,7 @@ function PdfPlaceholder({ prompt }: { prompt: Prompt }) {
           </span>
         </div>
         <a
-          href={prompt.pdf_url || '#'}
+          href={actualPdfUrl || '#'}
           download={filename}
           target="_blank"
           rel="noopener noreferrer"
@@ -272,7 +326,7 @@ function PdfPlaceholder({ prompt }: { prompt: Prompt }) {
         {/* Actions */}
         <div className="relative flex gap-3 flex-wrap justify-center">
           <a
-            href={prompt.pdf_url || '#'}
+            href={actualPdfUrl || '#'}
             download={filename}
             target="_blank"
             rel="noopener noreferrer"
@@ -282,15 +336,14 @@ function PdfPlaceholder({ prompt }: { prompt: Prompt }) {
             <Download className="w-4 h-4" />
             Download
           </a>
-          <a
-            href={prompt.pdf_url || '#'}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-sm font-semibold transition-colors border border-zinc-700"
+          <button
+            type="button"
+            onClick={() => setShowViewer(true)}
+            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-sm font-semibold transition-colors border border-zinc-700 cursor-pointer"
           >
             <FileText className="w-4 h-4" />
             View
-          </a>
+          </button>
         </div>
       </div>
     </div>
@@ -303,7 +356,7 @@ function PromptContent({ prompt, content }: { prompt: Prompt; content: string })
   const [isExpanded, setIsExpanded] = useState(false)
 
   if (isPdf) {
-    return <PdfPlaceholder prompt={prompt} />
+    return <PdfPlaceholder prompt={prompt} pdfUrl={content} />
   }
 
   let variants: { subtitle: string; description: string; content?: string }[] = []

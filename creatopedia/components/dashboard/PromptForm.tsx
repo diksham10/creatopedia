@@ -74,7 +74,11 @@ export default function PromptForm({ defaultValues, promptId, onSuccess }: Props
   const [featured, setFeatured] = useState(defaultValues?.featured ?? false)
   const [slugManuallyEdited, setSlugManuallyEdited] = useState(!!defaultValues?.slug)
   const [contentType, setContentType] = useState<'prompt' | 'pdf'>(defaultValues?.content_type ?? 'prompt')
-  const [pdfUrl, setPdfUrl] = useState(defaultValues?.pdf_url ?? '')
+  const [pdfUrl, setPdfUrl] = useState(
+    defaultValues?.pdf_url ||
+    (defaultValues?.content_type === 'pdf' ? defaultValues?.content : '') ||
+    ''
+  )
   const [uploadingPdf, setUploadingPdf] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [saving, setSaving] = useState(false)

@@ -2,7 +2,7 @@
 import uuid
 import logging
 import mimetypes
-from fastapi import APIRouter, Depends, UploadFile, File, Form, Request
+from fastapi import APIRouter, Depends, UploadFile, File, Form, Request, Response
 from fastapi.responses import StreamingResponse
 from botocore.exceptions import ClientError
 from app.core.security import get_current_creator
@@ -124,6 +124,26 @@ async def get_presigned_url(
         public_url=public_url,
         object_key=object_key
     )
+
+@router.head("/media/{object_key:path}")
+async def get_media_file_info(object_key: str):
+    """
+    Proxy metadata from Backblaze B2 so file sizes can be checked.
+    """
+    try:
+        response = b2_client.head_object(
+            Bucket=settings.B2_BUCKET_NAME,
+            Key=object_key
+        )
+        headers = {
+            "Content-Length": str(response.get("ContentLength", 0)),
+            "Content-Type": response.get("ContentType", "application/octet-stream"),
+        }
+        return Response(status_code=200, headers=headers)
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'NoSuchKey':
+            raise NotFoundError("File")
+        raise
 
 @router.get("/media/{object_key:path}")
 async def get_media_file(object_key: str):

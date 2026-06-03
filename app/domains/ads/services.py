@@ -1,5 +1,6 @@
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel import select, update
+from sqlalchemy.orm import selectinload
 from app.domains.ads.models import AdClient, AdCampaign, AdPlacement
 from app.domains.ads.schemas import AdClientCreate, AdCampaignCreate, AdClientUpdate, AdCampaignUpdate
 from app.domains.users.models import Creator
@@ -56,33 +57,78 @@ async def create_campaign(db: AsyncSession, creator: Creator, data: AdCampaignCr
     if client.creator_id != creator.id:
         raise ForbiddenError()
 
+    placements_data = data.placements
+    campaign_dict = data.model_dump(exclude={"placements"})
+
     campaign = AdCampaign(
-        **data.model_dump(),
+        **campaign_dict,
         creator_id=creator.id
     )
     db.add(campaign)
+    await db.flush()
+
+    if placements_data:
+        for p_data in placements_data:
+            placement = AdPlacement(
+                **p_data.model_dump(),
+                campaign_id=campaign.id
+            )
+            db.add(placement)
+
     await db.commit()
-    await db.refresh(campaign)
-    return campaign
+    
+    result = await db.exec(
+        select(AdCampaign)
+        .where(AdCampaign.id == campaign.id)
+        .options(selectinload(AdCampaign.placements))
+    )
+    return result.one()
 
 async def get_campaigns(db: AsyncSession, creator: Creator) -> list[AdCampaign]:
-    result = await db.exec(select(AdCampaign).where(AdCampaign.creator_id == creator.id))
+    result = await db.exec(
+        select(AdCampaign)
+        .where(AdCampaign.creator_id == creator.id)
+        .options(selectinload(AdCampaign.placements))
+    )
     return result.all()
 
 async def update_campaign(db: AsyncSession, creator: Creator, campaign_id: uuid.UUID, data: AdCampaignUpdate) -> AdCampaign:
-    result = await db.exec(select(AdCampaign).where(AdCampaign.id == campaign_id, AdCampaign.creator_id == creator.id))
+    result = await db.exec(
+        select(AdCampaign)
+        .where(AdCampaign.id == campaign_id, AdCampaign.creator_id == creator.id)
+        .options(selectinload(AdCampaign.placements))
+    )
     campaign = result.first()
     if not campaign:
         raise NotFoundError("AdCampaign")
     
-    update_data = data.model_dump(exclude_unset=True)
+    update_data = data.model_dump(exclude_unset=True, exclude={"placements"})
     for key, value in update_data.items():
         setattr(campaign, key, value)
     
+    if data.placements is not None:
+        # Delete old placements
+        existing_placements_res = await db.exec(select(AdPlacement).where(AdPlacement.campaign_id == campaign_id))
+        for p in existing_placements_res.all():
+            await db.delete(p)
+            
+        # Add new placements
+        for p_data in data.placements:
+            placement = AdPlacement(
+                **p_data.model_dump(),
+                campaign_id=campaign.id
+            )
+            db.add(placement)
+            
     db.add(campaign)
     await db.commit()
-    await db.refresh(campaign)
-    return campaign
+    
+    refreshed_result = await db.exec(
+        select(AdCampaign)
+        .where(AdCampaign.id == campaign_id)
+        .options(selectinload(AdCampaign.placements))
+    )
+    return refreshed_result.one()
 
 async def delete_campaign(db: AsyncSession, creator: Creator, campaign_id: uuid.UUID) -> None:
     result = await db.exec(select(AdCampaign).where(AdCampaign.id == campaign_id, AdCampaign.creator_id == creator.id))

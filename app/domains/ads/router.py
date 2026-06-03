@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, Query, status
 from sqlmodel.ext.asyncio.session import AsyncSession
-from sqlmodel import select
+from sqlmodel import select, or_
 from app.core.database import get_db
 from app.core.security import get_current_creator
 from app.domains.users.models import Creator
@@ -130,15 +130,24 @@ async def get_public_ad_placements(
         )
     )
 
-    if page_type:
+    # If prompt_id or category_id is specified, fetch matching context-specific or global placements
+    if prompt_id or category_id:
+        conditions = [
+            (AdPlacement.prompt_id == None) & (AdPlacement.category_id == None)
+        ]
+        if prompt_id:
+            conditions.append(AdPlacement.prompt_id == prompt_id)
+        if category_id:
+            conditions.append(AdPlacement.category_id == category_id)
+        query = query.where(or_(*conditions))
+    elif page_type:
         normalized_page_type = page_type.strip().lower()
         if normalized_page_type in {"creator_page", "creator-page", "creator"}:
-            normalized_page_type = PageType.global_.value
-        query = query.where(AdPlacement.page_type == normalized_page_type)
-    if prompt_id:
-        query = query.where(AdPlacement.prompt_id == prompt_id)
-    if category_id:
-        query = query.where(AdPlacement.category_id == category_id)
+            query = query.where(
+                (AdPlacement.prompt_id == None) & (AdPlacement.category_id == None)
+            )
+        else:
+            query = query.where(AdPlacement.page_type == normalized_page_type)
 
     result = await db.exec(query)
     rows = result.all()

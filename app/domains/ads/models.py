@@ -50,6 +50,10 @@ class AdCampaign(BaseDBModel, table=True):
         back_populates="campaign", sa_relationship_kwargs={"cascade": "all, delete-orphan"}
     )
 
+    @property
+    def ad_placements(self) -> List["AdPlacement"]:
+        return self.placements
+
 class AdPlacement(BaseDBModel, table=True):
     __tablename__ = "ad_placements"
 

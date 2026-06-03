@@ -31,8 +31,8 @@ export default function PdfViewer({ url }: Props) {
         >
           <Page 
             pageNumber={pageNumber} 
-            renderTextLayer={true}
-            renderAnnotationLayer={true}
+            renderTextLayer={false}
+            renderAnnotationLayer={false}
             className="shadow-2xl"
             width={Math.min(window.innerWidth - 64, 800)} // Responsive max-width
           />

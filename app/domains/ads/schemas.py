@@ -62,6 +62,7 @@ class AdCampaignBase(BaseModel):
 
 class AdCampaignCreate(AdCampaignBase):
     client_id: uuid.UUID
+    placements: Optional[List[AdPlacementCreate]] = None
 
 class AdCampaignUpdate(BaseModel):
     name: Optional[str] = None
@@ -71,6 +72,7 @@ class AdCampaignUpdate(BaseModel):
     budget: Optional[float] = None
     start_date: Optional[date] = None
     end_date: Optional[date] = None
+    placements: Optional[List[AdPlacementCreate]] = None
 
 class AdCampaignOut(AdCampaignBase):
     id: uuid.UUID
@@ -78,6 +80,7 @@ class AdCampaignOut(AdCampaignBase):
     impression_count: int
     client_id: uuid.UUID
     creator_id: uuid.UUID
+    ad_placements: Optional[List[AdPlacementOut]] = None
 
     class Config:
         from_attributes = True
