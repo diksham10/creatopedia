@@ -143,7 +143,9 @@ async function handleToggleStatus(p: PromptWithCategory) {
             <tr key={p.id} className={`hover:bg-zinc-900/40 transition-colors ${deletingId === p.id ? 'opacity-40' : ''}`}>
               <td className="px-5 py-4">
                 <div>
-                  <p className="font-semibold text-white truncate max-w-[200px]">{p.title}</p>
+                  <Link href={`/dashboard/prompts/${p.id}/view`} className="font-semibold text-white hover:text-indigo-400 transition-colors truncate max-w-[200px] block">
+                    {p.title}
+                  </Link>
                   <p className="text-xs text-zinc-500 mt-0.5">/{p.slug}</p>
                 </div>
               </td>

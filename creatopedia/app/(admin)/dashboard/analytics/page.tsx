@@ -260,7 +260,9 @@ function TopPromptsTable({ data }: { data: TopPromptData[] }) {
             {data.map((p) => (
               <tr key={p.id} className="hover:bg-zinc-800/30">
                 <td className="px-6 py-4">
-                  <div className="font-semibold text-white truncate max-w-[150px]">{p.title}</div>
+                  <Link href={`/dashboard/prompts/${p.id}/view`} className="font-semibold text-white hover:text-indigo-400 transition-colors truncate max-w-[150px] block">
+                    {p.title}
+                  </Link>
                   <div className="text-xs text-zinc-500">{p.gate_type}</div>
                 </td>
                 <td className="px-6 py-4 text-right font-mono text-zinc-400">{p.views.toLocaleString()}</td>

@@ -2,12 +2,14 @@
 import uuid
 import logging
 import mimetypes
-from fastapi import APIRouter, Depends, UploadFile, File, Form
+from fastapi import APIRouter, Depends, UploadFile, File, Form, Request
+from fastapi.responses import StreamingResponse
+from botocore.exceptions import ClientError
 from app.core.security import get_current_creator
 from app.core.config import get_settings
 from app.domains.uploads import services, schemas
-from app.common.exceptions import BadRequestError
-from app.core.storage import direct_upload_to_b2
+from app.common.exceptions import BadRequestError, NotFoundError
+from app.core.storage import direct_upload_to_b2, b2_client
 
 router = APIRouter(prefix="/upload", tags=["Uploads"])
 settings = get_settings()
@@ -23,6 +25,7 @@ MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 
 @router.post("/file", response_model=schemas.UploadResponse)
 async def upload_file_direct(
+    request: Request,
     file: UploadFile = File(...),
     creator=Depends(get_current_creator),
 ):
@@ -61,13 +64,15 @@ async def upload_file_direct(
 
     direct_upload_to_b2(object_key, data, content_type)
 
-    public_url = f"{settings.B2_PUBLIC_URL}/{object_key}"
+    base_url = str(request.base_url).rstrip("/")
+    public_url = f"{base_url}{settings.API_PREFIX}/upload/media/{object_key}"
     logger.info(f"[UPLOAD] ✓ Stored at {public_url}")
 
     return schemas.UploadResponse(url=public_url, object_key=object_key)
 
 @router.post("/presign", response_model=schemas.PresignResponse)
 async def get_presigned_url(
+    request: Request,
     req: schemas.PresignRequest,
     creator=Depends(get_current_creator),
 ):
@@ -111,10 +116,30 @@ async def get_presigned_url(
     )
 
     # Construct the final public URL
-    public_url = f"{settings.B2_PUBLIC_URL}/{object_key}"
+    base_url = str(request.base_url).rstrip("/")
+    public_url = f"{base_url}{settings.API_PREFIX}/upload/media/{object_key}"
 
     return schemas.PresignResponse(
         upload_url=upload_url,
         public_url=public_url,
         object_key=object_key
     )
+
+@router.get("/media/{object_key:path}")
+async def get_media_file(object_key: str):
+    """
+    Proxy download from Backblaze B2 so private files can be viewed publicly.
+    """
+    try:
+        response = b2_client.get_object(
+            Bucket=settings.B2_BUCKET_NAME,
+            Key=object_key
+        )
+        return StreamingResponse(
+            response['Body'],
+            media_type=response.get('ContentType', 'application/octet-stream')
+        )
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'NoSuchKey':
+            raise NotFoundError("File")
+        raise

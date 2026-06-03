@@ -128,6 +128,12 @@ def delete_file_by_url(url: str) -> None:
         parsed = urlparse(url)
         path = parsed.path.lstrip("/")
         
+        # Check if it is a backend media proxy URL
+        if "api/upload/media/" in path:
+            key = path.split("api/upload/media/", 1)[1]
+            delete_object_from_b2(key)
+            return
+
         # Check standard /file/<bucket>/ prefix
         if path.startswith("file/"):
             parts = path.split("/", 2)

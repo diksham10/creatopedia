@@ -409,7 +409,14 @@ export default function EnhancedPublicPromptUI({
                 <div className="px-4 py-8 md:px-8 text-white">
                   {/* Media Section — clean inline video/image, no social chrome */}
                   {(() => {
-                    const mediaUrl = igMedia?.media_url || prompt.video_url || null
+                    const rawMediaUrl = igMedia?.media_url || prompt.video_url || null
+                    const isInstagramPage = rawMediaUrl && (
+                      rawMediaUrl.includes('instagram.com/p/') || 
+                      rawMediaUrl.includes('instagram.com/reel/') || 
+                      rawMediaUrl.includes('instagram.com/tv/') ||
+                      rawMediaUrl.includes('instagram.com/reels/')
+                    )
+                    const mediaUrl = isInstagramPage ? null : rawMediaUrl
                     const isVideo = igMedia?.media_type === 'VIDEO' || (mediaUrl && !igMedia && /\.(mp4|mov|webm)/i.test(mediaUrl))
                     const thumbUrl = igMedia?.thumbnail_url || prompt.thumbnail_url || null
 
@@ -426,6 +433,7 @@ export default function EnhancedPublicPromptUI({
                             className="w-full max-h-[520px] object-contain bg-black"
                           />
                         ) : (
+                          // eslint-disable-next-line @next/next/no-img-element
                           <img
                             src={mediaUrl || thumbUrl!}
                             alt={prompt.title}

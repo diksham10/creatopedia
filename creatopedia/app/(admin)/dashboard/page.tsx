@@ -97,7 +97,9 @@ export default function AdminDashboard() {
                       #{i + 1}
                     </div>
                     <div>
-                      <h4 className="text-white font-semibold text-sm">{p.title}</h4>
+                      <Link href={`/dashboard/prompts/${p.id}/view`} className="text-white hover:text-indigo-400 transition-colors font-semibold text-sm block">
+                        {p.title}
+                      </Link>
                       <p className="text-xs text-zinc-500">/{p.slug}</p>
                     </div>
                   </div>

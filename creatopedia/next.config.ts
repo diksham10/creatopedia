@@ -8,6 +8,7 @@ const nextConfig: NextConfig = {
     root: path.resolve(__dirname),
   },
   images: {
+    unoptimized: true,
     remotePatterns: [
       {
         protocol: 'https',

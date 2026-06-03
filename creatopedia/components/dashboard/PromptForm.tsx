@@ -66,6 +66,10 @@ export default function PromptForm({ defaultValues, promptId, onSuccess }: Props
   const [embedHtml, setEmbedHtml] = useState(defaultValues?.embed_html ?? '')
   const [thumbnailUrl, setThumbnailUrl] = useState(defaultValues?.thumbnail_url ?? '')
   const [shareImageUrl, setShareImageUrl] = useState(defaultValues?.share_image_url ?? '')
+  const [thumbnailPreview, setThumbnailPreview] = useState<string | null>(defaultValues?.thumbnail_url ?? null)
+  const [shareImagePreview, setShareImagePreview] = useState<string | null>(defaultValues?.share_image_url ?? null)
+  const [thumbnailError, setThumbnailError] = useState(false)
+  const [shareImageError, setShareImageError] = useState(false)
   const [status, setStatus] = useState<'draft' | 'published'>(defaultValues?.status ?? 'published')
   const [featured, setFeatured] = useState(defaultValues?.featured ?? false)
   const [slugManuallyEdited, setSlugManuallyEdited] = useState(!!defaultValues?.slug)
@@ -98,14 +102,34 @@ export default function PromptForm({ defaultValues, promptId, onSuccess }: Props
   async function handleThumbnailUpload(e: React.ChangeEvent<HTMLInputElement>, isShareImage = false) {
     const file = e.target.files?.[0]
     if (!file) return
+
+    // Generate local preview URL
+    const localUrl = URL.createObjectURL(file)
+    if (isShareImage) {
+      setShareImagePreview(localUrl)
+      setShareImageError(false)
+    } else {
+      setThumbnailPreview(localUrl)
+      setThumbnailError(false)
+    }
+
     setUploading(true)
     setServerError(null)
     try {
       const url = await uploadFile(file)
-      if (isShareImage) setShareImageUrl(url)
-      else setThumbnailUrl(url)
+      if (isShareImage) {
+        setShareImageUrl(url)
+      } else {
+        setThumbnailUrl(url)
+      }
     } catch (err: any) {
       setServerError(err.message || 'Upload failed')
+      // Reset preview on failure
+      if (isShareImage) {
+        setShareImagePreview(shareImageUrl || null)
+      } else {
+        setThumbnailPreview(thumbnailUrl || null)
+      }
     } finally {
       setUploading(false)
     }
@@ -163,6 +187,8 @@ export default function PromptForm({ defaultValues, promptId, onSuccess }: Props
     const imageUrl = post.media_type === 'VIDEO' ? (post.thumbnail_url || post.media_url) : post.media_url
     setVideoUrl(post.permalink)
     setThumbnailUrl(imageUrl)
+    setThumbnailPreview(imageUrl)
+    setThumbnailError(false)
 
     if (post.caption) {
       const firstLine = post.caption.split('\n')[0].trim().substring(0, 60)
@@ -615,13 +641,29 @@ export default function PromptForm({ defaultValues, promptId, onSuccess }: Props
                 </div>
               )}
             </div>
-            {thumbnailUrl && (
+            {thumbnailPreview && (
               <div className="relative group flex-shrink-0">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={thumbnailUrl} alt="Thumbnail" className="w-20 h-20 object-cover rounded-lg border border-zinc-700 shadow-xl" />
+                {thumbnailError ? (
+                  <div className="w-20 h-20 rounded-lg border border-red-500/20 bg-red-500/10 flex flex-col items-center justify-center text-center p-1 text-[10px] font-semibold text-red-400">
+                    <span>Access Denied</span>
+                    <span className="text-[8px] text-zinc-500 mt-1">Make B2 Bucket Public</span>
+                  </div>
+                ) : (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img 
+                    src={thumbnailPreview} 
+                    alt="Thumbnail" 
+                    className="w-20 h-20 object-cover rounded-lg border border-zinc-700 shadow-xl" 
+                    onError={() => setThumbnailError(true)}
+                  />
+                )}
                 <button
                   type="button"
-                  onClick={() => setThumbnailUrl('')}
+                  onClick={() => {
+                    setThumbnailUrl('')
+                    setThumbnailPreview(null)
+                    setThumbnailError(false)
+                  }}
                   className="absolute -top-2 -right-2 p-1.5 rounded-full bg-red-500 text-white opacity-0 group-hover:opacity-100 transition-opacity shadow-lg active:scale-90"
                   title="Remove thumbnail"
                 >
@@ -660,13 +702,29 @@ export default function PromptForm({ defaultValues, promptId, onSuccess }: Props
                 </div>
               )}
             </div>
-            {shareImageUrl && (
+            {shareImagePreview && (
               <div className="relative group flex-shrink-0">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={shareImageUrl} alt="Share Image" className="w-20 h-20 object-cover rounded-lg border border-zinc-700 shadow-xl" />
+                {shareImageError ? (
+                  <div className="w-20 h-20 rounded-lg border border-red-500/20 bg-red-500/10 flex flex-col items-center justify-center text-center p-1 text-[10px] font-semibold text-red-400">
+                    <span>Access Denied</span>
+                    <span className="text-[8px] text-zinc-500 mt-1">Make B2 Bucket Public</span>
+                  </div>
+                ) : (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img 
+                    src={shareImagePreview} 
+                    alt="Share Image" 
+                    className="w-20 h-20 object-cover rounded-lg border border-zinc-700 shadow-xl" 
+                    onError={() => setShareImageError(true)}
+                  />
+                )}
                 <button
                   type="button"
-                  onClick={() => setShareImageUrl('')}
+                  onClick={() => {
+                    setShareImageUrl('')
+                    setShareImagePreview(null)
+                    setShareImageError(false)
+                  }}
                   className="absolute -top-2 -right-2 p-1.5 rounded-full bg-red-500 text-white opacity-0 group-hover:opacity-100 transition-opacity shadow-lg active:scale-90"
                   title="Remove share image"
                 >
