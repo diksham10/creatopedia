@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, status, HTTPException
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel import select, or_
 from app.core.database import get_db
@@ -105,6 +105,69 @@ async def record_impression(
 ):
     await services.record_impression(db, campaign_id)
     return {"status": "recorded"}
+
+
+@router.get("/placements/discovery", response_model=list[schemas.AdPlacementOut])
+async def get_discovery_placements(
+    creator_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    query = select(AdPlacement).join(AdCampaign).where(
+        AdCampaign.creator_id == creator_id,
+        AdPlacement.page_type == PageType.discovery
+    )
+    result = await db.exec(query)
+    return result.all()
+
+
+@router.post("/placements/discovery", response_model=list[schemas.AdPlacementOut])
+async def update_discovery_placements(
+    data: schemas.DiscoverySlotsUpdate,
+    db: AsyncSession = Depends(get_db),
+    creator: Creator = Depends(get_current_creator)
+):
+    # Verify all campaign ids belong to the creator
+    campaign_ids = [slot.campaign_id for slot in data.slots]
+    if campaign_ids:
+        camp_query = select(AdCampaign.id).where(
+            AdCampaign.id.in_(campaign_ids),
+            AdCampaign.creator_id == creator.id
+        )
+        camp_result = await db.exec(camp_query)
+        valid_campaign_ids = set(camp_result.all())
+        
+        for cid in campaign_ids:
+            if cid not in valid_campaign_ids:
+                raise HTTPException(status_code=400, detail=f"Campaign {cid} not found or unauthorized")
+
+    # Fetch existing discovery placements
+    existing_query = select(AdPlacement).join(AdCampaign).where(
+        AdCampaign.creator_id == creator.id,
+        AdPlacement.page_type == PageType.discovery
+    )
+    existing_result = await db.exec(existing_query)
+    for p in existing_result.all():
+        await db.delete(p)
+
+    # Insert new ones
+    new_placements = []
+    for slot in data.slots:
+        position = "discovery_header_banner" if slot.index == -1 else f"discovery_slot_{slot.index}"
+        placement = AdPlacement(
+            position=position,
+            page_type=PageType.discovery,
+            campaign_id=slot.campaign_id,
+            priority=0,
+            prompt_id=None,
+            category_id=None
+        )
+        db.add(placement)
+        new_placements.append(placement)
+
+    await db.commit()
+    for p in new_placements:
+        await db.refresh(p)
+    return new_placements
 
 
 @public_router.get("/placements")

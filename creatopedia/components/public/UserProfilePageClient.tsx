@@ -278,6 +278,24 @@ export default function UserProfilePageClient({ creator, igUser, igFeed, categor
               Instagram not connected by user.
             </p>
           )}
+
+          {creator.ads_enabled !== false && (() => {
+            const headerBanner = adPlacements.find(p => (p.position as string) === 'discovery_header_banner')
+            const fallbackBanner = adPlacements.find(p => (p.position as string) === 'creator_page')
+
+            if (headerBanner || fallbackBanner) {
+              return (
+                <div className="mt-8 w-full max-w-4xl px-4">
+                  <AdBanner
+                    placements={adPlacements}
+                    position={headerBanner ? 'discovery_header_banner' : 'creator_page'}
+                    creatorId={creator.id}
+                  />
+                </div>
+              )
+            }
+            return null
+          })()}
         </div>
       </div>
 
@@ -306,25 +324,6 @@ export default function UserProfilePageClient({ creator, igUser, igFeed, categor
           </button>
         </div> */}
 
-        {/* ─── Creator Page Ad Placement ─── */}
-        {(() => {
-          // Find header banner placement
-          const headerBanner = adPlacements.find(p => (p.position as string) === 'discovery_header_banner')
-          const fallbackBanner = adPlacements.find(p => (p.position as string) === 'creator_page')
-
-          if (creator.ads_enabled !== false && (headerBanner || fallbackBanner)) {
-            return (
-              <div className="mb-12 w-full">
-                <AdBanner
-                  placements={adPlacements}
-                  position={headerBanner ? 'discovery_header_banner' : 'creator_page'}
-                  creatorId={creator.id}
-                />
-              </div>
-            )
-          }
-          return null
-        })()}
 
         {/* ─── CREATION TAB CONTENT ─── */}
         {activeTab === 'creation' && (
@@ -403,39 +402,78 @@ export default function UserProfilePageClient({ creator, igUser, igFeed, categor
                 }
               >
                 {(() => {
-                  const items = []
+                  const combinedItems = []
                   const isAdsEnabled = creator.ads_enabled !== false
                   const frequency = creator.ad_frequency || 4
 
                   // Organize placements for easy lookup
                   const gridSlots: Record<number, AdPlacementData> = {}
-                  let headerBanner: AdPlacementData | null = null
-
                   adPlacements.forEach(p => {
-                    if ((p.position as string) === 'discovery_header_banner') {
-                      headerBanner = p
-                    } else {
+                    if ((p.position as string) !== 'discovery_header_banner') {
                       const match = (p.position as string).match(/discovery_slot_(\d+)/)
                       if (match) gridSlots[parseInt(match[1])] = p
                     }
                   })
 
-                  // Use creator_page as fallback campaign if no specific slot campaign found
+                  const hasManualSlots = Object.keys(gridSlots).length > 0
                   const fallbackAd = adPlacements.find(p => p.position === 'creator_page') || adPlacements[0]
 
-                  for (let i = 0; i < filteredPrompts.length; i++) {
-                    const prompt = filteredPrompts[i]
-                    const toolColor = AI_TOOL_COLORS[prompt.ai_tool.split(',')[0].trim()] ?? '#6366f1'
-                    const gate = GATE_LABELS[prompt.gate_type] ?? GATE_LABELS.open
-                    const href = promptUrl(prompt.slug)
+                  let promptIndex = 0
+                  let i = 0
+                  const maxAdIndex = hasManualSlots ? Math.max(...Object.keys(gridSlots).map(Number)) : -1
 
-                    // 1. Check for manual grid slot BEFORE the prompt (only in Grid mode to preserve clean List rows)
-                    if (viewMode === 'grid' && isAdsEnabled && gridSlots[i]) {
-                      items.push(
-                        <div key={`ad-slot-${i}`} className="relative aspect-[3/4.2] rounded-xl sm:rounded-2xl overflow-hidden border border-white/10 bg-zinc-900/30 backdrop-blur-xl shadow-2xl">
+                  if (viewMode === 'grid') {
+                    while (promptIndex < filteredPrompts.length || (isAdsEnabled && i <= maxAdIndex)) {
+                      const slot = gridSlots[i]
+                      if (isAdsEnabled && hasManualSlots && slot) {
+                        combinedItems.push({
+                          type: 'ad',
+                          key: `ad-slot-${i}`,
+                          position: slot.position
+                        })
+                      } else if (promptIndex < filteredPrompts.length) {
+                        combinedItems.push({
+                          type: 'prompt',
+                          key: filteredPrompts[promptIndex].id,
+                          data: filteredPrompts[promptIndex]
+                        })
+                        promptIndex++
+
+                        // Check for fallback frequency injection
+                        if (
+                          isAdsEnabled &&
+                          !hasManualSlots &&
+                          fallbackAd &&
+                          promptIndex % frequency === 0 &&
+                          promptIndex < filteredPrompts.length
+                        ) {
+                          combinedItems.push({
+                            type: 'ad',
+                            key: `ad-freq-${promptIndex}`,
+                            position: fallbackAd.position
+                          })
+                        }
+                      }
+                      i++
+                    }
+                  } else {
+                    // List view: just show prompts
+                    filteredPrompts.forEach(p => {
+                      combinedItems.push({
+                        type: 'prompt',
+                        key: p.id,
+                        data: p
+                      })
+                    })
+                  }
+
+                  return combinedItems.map(item => {
+                    if (item.type === 'ad') {
+                      return (
+                        <div key={item.key} className="relative aspect-[3/4.2] rounded-xl sm:rounded-2xl overflow-hidden border border-white/10 bg-zinc-900/30 backdrop-blur-xl shadow-2xl animate-in fade-in duration-300">
                           <AdBanner
                             placements={adPlacements}
-                            position={gridSlots[i].position}
+                            position={item.position!}
                             creatorId={creator.id}
                             fill
                           />
@@ -443,12 +481,16 @@ export default function UserProfilePageClient({ creator, igUser, igFeed, categor
                       )
                     }
 
-                    // 2. Add the prompt itself
+                    const prompt = item.data!
+                    const toolColor = AI_TOOL_COLORS[prompt.ai_tool.split(',')[0].trim()] ?? '#6366f1'
+                    const gate = GATE_LABELS[prompt.gate_type] ?? GATE_LABELS.open
+                    const href = promptUrl(prompt.slug)
+
                     if (viewMode === 'grid') {
-                      items.push(
+                      return (
                         <Link
                           href={href}
-                          key={prompt.id}
+                          key={item.key}
                           className="group relative aspect-[3/4.2] rounded-xl sm:rounded-2xl overflow-hidden border border-white/10 hover:border-white/20 transition-all duration-500 cursor-pointer select-none flex flex-col justify-between p-3 sm:p-5 bg-zinc-900/30 backdrop-blur-xl hover:scale-[1.02] shadow-2xl animate-in fade-in duration-300"
                         >
                           {/* Premium Immersive background image */}
@@ -503,10 +545,10 @@ export default function UserProfilePageClient({ creator, igUser, igFeed, categor
                         </Link>
                       )
                     } else {
-                      items.push(
+                      return (
                         <Link
                           href={href}
-                          key={prompt.id}
+                          key={item.key}
                           className="group w-full rounded-2xl overflow-hidden border border-white/10 hover:border-white/20 transition-all duration-300 cursor-pointer select-none flex items-center justify-between p-3 sm:p-4 bg-zinc-900/30 backdrop-blur-xl hover:scale-[1.01] shadow-2xl gap-4 animate-in fade-in duration-300"
                         >
                           {/* Horizontal Row Left Side */}
@@ -569,19 +611,7 @@ export default function UserProfilePageClient({ creator, igUser, igFeed, categor
                         </Link>
                       )
                     }
-
-                    // 3. Fallback frequency injection (only in Grid mode, no manual slots defined for the whole grid)
-                    const hasManualSlots = Object.keys(gridSlots).length > 0
-                    if (viewMode === 'grid' && isAdsEnabled && !hasManualSlots && fallbackAd && (i + 1) % frequency === 0 && i !== filteredPrompts.length - 1) {
-                      items.push(
-                        <div key={`ad-freq-${i}`} className="relative aspect-[3/4.2] rounded-xl sm:rounded-2xl overflow-hidden border border-white/10 bg-zinc-900/30 backdrop-blur-xl shadow-2xl">
-                          <AdBanner placements={adPlacements} position={fallbackAd.position} creatorId={creator.id} fill />
-                        </div>
-                      )
-                    }
-                  }
-
-                  return items
+                  })
                 })()}
               </div>
             )}

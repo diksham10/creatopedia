@@ -84,3 +84,10 @@ class AdCampaignOut(AdCampaignBase):
 
     class Config:
         from_attributes = True
+
+class DiscoverySlotSchema(BaseModel):
+    index: int
+    campaign_id: uuid.UUID
+
+class DiscoverySlotsUpdate(BaseModel):
+    slots: List[DiscoverySlotSchema]
