@@ -32,11 +32,18 @@ export async function getAggregatedStats(): Promise<AnalyticsStats> {
     ad_clicks: number
     email_captures: number
     prompts_created: number
+    published_prompts?: number
+    total_prompts?: number
+    active_campaigns?: number
+    unique_visitors?: number
   }>('/analytics/overview')
 
   const daily = await apiFetch<{ date: string; views: number }[]>(
     '/analytics/daily?days=7'
   )
+
+  const views = overview.prompt_views || 0
+  const copies = overview.prompt_copies || 0
 
   return {
     dailyViews: (daily || []).map((d) => ({ date: d.date, views: d.views })),
@@ -46,14 +53,14 @@ export async function getAggregatedStats(): Promise<AnalyticsStats> {
     topCampaigns: [],
     recentCaptures: [],
     systemStats: {
-      totalPrompts: overview.prompts_created || 0,
-      activePrompts: overview.prompt_views || 0,
+      totalPrompts: overview.total_prompts ?? overview.prompts_created ?? 0,
+      activePrompts: overview.published_prompts ?? 0,
       totalCategories: 0,
-      activeCampaigns: 0,
+      activeCampaigns: overview.active_campaigns ?? 0,
     },
     engagement: {
-      avgConversionRate: 0,
-      totalUniqueVisitors: 0,
+      avgConversionRate: views > 0 ? (copies / views) * 100 : 0,
+      totalUniqueVisitors: overview.unique_visitors ?? 0,
       totalRevenue: 0,
     },
     trendingPrompts: [],

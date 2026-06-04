@@ -168,7 +168,9 @@ async def track_subdomain_visit(
     # Verify internal secret in production. If not an internal call, require
     # authentication and verify ownership of the subdomain.
     internal_ok = False
-    if getattr(settings, "INTERNAL_API_SECRET", None) and x_internal_secret:
+    if settings.ENVIRONMENT == "development" and not settings.INTERNAL_API_SECRET:
+        internal_ok = True
+    elif getattr(settings, "INTERNAL_API_SECRET", None) and x_internal_secret:
         if x_internal_secret == settings.INTERNAL_API_SECRET:
             internal_ok = True
             # Optional IP allowlist (comma-separated) to further restrict callers.
@@ -185,8 +187,8 @@ async def track_subdomain_visit(
         if creator.subdomain != subdomain:
             raise ForbiddenError("You do not have permission to record visits for this subdomain")
 
-    # Use verified email from JWT when available; ignore any provided `user_email`.
-    effective_user_email = creator.email if creator else None
+    # Use verified email from JWT when available; fallback to the payload email.
+    effective_user_email = creator.email if creator else user_email
 
     visit_id = await services.record_subdomain_visit(
         db,

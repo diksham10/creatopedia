@@ -94,7 +94,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json(response, {
       status: 200,
-      headers: { 'Cache-Control': 'private, max-age=60, stale-while-revalidate=300' },
+      headers: { 'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate' },
     })
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)

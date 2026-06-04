@@ -14,7 +14,7 @@ export async function GET(req: NextRequest, { params }: Params) {
   const qs = url.search
   try {
     const resp = await axios.get(`${API_BASE_URL.replace(/\/$/, '')}/analytics/campaigns/${campaignId}${qs}`, { headers: { cookie: cookieHeader } })
-    return NextResponse.json(resp.data, { headers: { 'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=300' } })
+    return NextResponse.json(resp.data, { headers: { 'Cache-Control': 'no-store, no-cache, must-revalidate' } })
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     return NextResponse.json({ error: msg }, { status: 500 })

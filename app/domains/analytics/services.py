@@ -43,10 +43,30 @@ async def get_overview(db: AsyncSession, creator: Creator) -> dict:
 
     # 1. Get Prompts Created Count
     from app.domains.prompts.models import Prompt
+    from app.common.enums import PromptStatus
     prompts_result = await db.exec(
         select(func.count(Prompt.id)).where(Prompt.creator_id == creator.id)
     )
     prompts_created = prompts_result.first() or 0
+
+    published_prompts_result = await db.exec(
+        select(func.count(Prompt.id)).where(
+            Prompt.creator_id == creator.id,
+            Prompt.status == PromptStatus.published
+        )
+    )
+    published_prompts = published_prompts_result.first() or 0
+
+    # Get active campaigns
+    from app.domains.ads.models import AdCampaign
+    from app.common.enums import AdStatus
+    campaigns_result = await db.exec(
+        select(func.count(AdCampaign.id)).where(
+            AdCampaign.creator_id == creator.id,
+            AdCampaign.status == AdStatus.active
+        )
+    )
+    active_campaigns = campaigns_result.first() or 0
 
     # 2. Get Portfolio Visits (where event_type=view and entity_type='portfolio')
     # Because this might not be in AggregatedStat yet, we can query EventLog or 
@@ -61,26 +81,60 @@ async def get_overview(db: AsyncSession, creator: Creator) -> dict:
     )
     portfolio_visits = portfolio_visits_result.first() or 0
 
-    # 3. Get existing rolled-up stats
-    result = await db.exec(
-        select(
-            func.sum(AggregatedStat.prompt_views),
-            func.sum(AggregatedStat.prompt_copies),
-            func.sum(AggregatedStat.ad_impressions),
-            func.sum(AggregatedStat.ad_clicks),
-            func.sum(AggregatedStat.email_captures),
-        ).where(
-            AggregatedStat.creator_id == creator.id,
-            AggregatedStat.stat_date >= thirty_days_ago,
+    # Get Unique Visitors (distinct session_id in EventLog over last 30 days)
+    unique_visitors_result = await db.exec(
+        select(func.count(func.distinct(EventLog.session_id))).where(
+            EventLog.creator_id == creator.id,
+            EventLog.created_at >= thirty_days_ago_dt
         )
     )
-    row = result.first()
-    
-    views = row[0] or 0
-    copies = row[1] or 0
-    impressions = row[2] or 0
-    clicks = row[3] or 0
-    captures = row[4] or 0
+    unique_visitors = unique_visitors_result.first() or 0
+
+    # 3. Get real-time stats from EventLog for the last 30 days
+    views_result = await db.exec(
+        select(func.count(EventLog.id)).where(
+            EventLog.creator_id == creator.id,
+            EventLog.event_type == EventType.view,
+            EventLog.created_at >= thirty_days_ago_dt
+        )
+    )
+    views = views_result.first() or 0
+
+    copies_result = await db.exec(
+        select(func.count(EventLog.id)).where(
+            EventLog.creator_id == creator.id,
+            EventLog.event_type == EventType.copy,
+            EventLog.created_at >= thirty_days_ago_dt
+        )
+    )
+    copies = copies_result.first() or 0
+
+    impressions_result = await db.exec(
+        select(func.count(EventLog.id)).where(
+            EventLog.creator_id == creator.id,
+            EventLog.event_type == EventType.ad_impression,
+            EventLog.created_at >= thirty_days_ago_dt
+        )
+    )
+    impressions = impressions_result.first() or 0
+
+    clicks_result = await db.exec(
+        select(func.count(EventLog.id)).where(
+            EventLog.creator_id == creator.id,
+            EventLog.event_type == EventType.ad_click,
+            EventLog.created_at >= thirty_days_ago_dt
+        )
+    )
+    clicks = clicks_result.first() or 0
+
+    captures_result = await db.exec(
+        select(func.count(EventLog.id)).where(
+            EventLog.creator_id == creator.id,
+            EventLog.event_type == EventType.email_capture,
+            EventLog.created_at >= thirty_days_ago_dt
+        )
+    )
+    captures = captures_result.first() or 0
 
     # Calculate CTR (Ad Clicks / Ad Impressions)
     ctr = 0.0
@@ -91,6 +145,7 @@ async def get_overview(db: AsyncSession, creator: Creator) -> dict:
         "total_views": views,
         "prompts_created": prompts_created,
         "profile_visits": portfolio_visits,
+        "unique_visitors": unique_visitors,
         "ctr": ctr,
         "prompt_views": views,
         "prompt_copies": copies,
@@ -98,6 +153,9 @@ async def get_overview(db: AsyncSession, creator: Creator) -> dict:
         "ad_clicks": clicks,
         "email_captures": captures,
         "period": "30d",
+        "published_prompts": published_prompts,
+        "total_prompts": prompts_created,
+        "active_campaigns": active_campaigns,
     }
 
 async def get_daily_chart(db: AsyncSession, creator: Creator, days: int = 30) -> list[dict]:
@@ -175,6 +233,15 @@ async def aggregate_daily(db: AsyncSession, target_date: date) -> int:
         clicks = (await db.exec(count_events(EventType.ad_click))).first() or 0
         captures = (await db.exec(count_events(EventType.email_capture))).first() or 0
 
+        # Calculate distinct session_id unique visitors for the day
+        unique_visitors = (await db.exec(
+            select(func.count(func.distinct(EventLog.session_id))).where(
+                EventLog.creator_id == creator_id,
+                EventLog.created_at >= start_dt,
+                EventLog.created_at < end_dt,
+            )
+        )).first() or 0
+
         # Upsert aggregated stat
         existing = await db.exec(
             select(AggregatedStat).where(
@@ -191,6 +258,7 @@ async def aggregate_daily(db: AsyncSession, target_date: date) -> int:
         stat.ad_impressions = impressions
         stat.ad_clicks = clicks
         stat.email_captures = captures
+        stat.unique_visitors = unique_visitors
         db.add(stat)
 
     await db.commit()

@@ -22,7 +22,11 @@ export async function GET(req: NextRequest, { params }: Params) {
   if (!cookieHeader) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   try {
     const resp = await axios.get(`${API_BASE_URL.replace(/\/$/, '')}/ads/clients/${id}`, { headers: { cookie: cookieHeader } })
-    return NextResponse.json(resp.data)
+    const mapped = {
+      ...resp.data,
+      status: resp.data.status === 'paused' ? 'inactive' : resp.data.status,
+    }
+    return NextResponse.json(mapped)
   } catch (e) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
   }
@@ -39,8 +43,20 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
   }
   try {
-    const resp = await axios.patch(`${API_BASE_URL.replace(/\/$/, '')}/ads/clients/${id}`, { ...parsed.data, updated_at: new Date().toISOString() }, { headers: { cookie: cookieHeader } })
-    return NextResponse.json(resp.data)
+    const patchPayload: any = { ...parsed.data }
+    if (patchPayload.status) {
+      patchPayload.status = patchPayload.status === 'inactive' ? 'paused' : patchPayload.status
+    }
+    const resp = await axios.patch(
+      `${API_BASE_URL.replace(/\/$/, '')}/ads/clients/${id}`,
+      { ...patchPayload, updated_at: new Date().toISOString() },
+      { headers: { cookie: cookieHeader } }
+    )
+    const mapped = {
+      ...resp.data,
+      status: resp.data.status === 'paused' ? 'inactive' : resp.data.status,
+    }
+    return NextResponse.json(mapped)
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     return NextResponse.json({ error: msg }, { status: 400 })

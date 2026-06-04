@@ -3,6 +3,7 @@
 import React, { useState } from 'react'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
+import SubdomainViewTracker from '@/components/public/SubdomainViewTracker'
 import { motion } from 'framer-motion'
 import {
   ArrowRight,
@@ -154,6 +155,7 @@ export default function CreatorPortfolioPage() {
 
   return (
     <div className="min-h-screen bg-[#070913] text-white selection:bg-pink-500/30 font-sans antialiased overflow-x-hidden relative">
+      <SubdomainViewTracker subdomain={subdomain} />
       {/* ─── STUNNING BACKGROUND RADIAL GLOWS ─── */}
       <div
         className="absolute inset-0 z-0 pointer-events-none opacity-40 select-none"

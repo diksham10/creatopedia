@@ -23,6 +23,7 @@ export async function GET(req: NextRequest) {
     const data = resp.data || []
     const enriched = (data ?? []).map((c: any) => ({
       ...c,
+      status: c.status === 'paused' ? 'inactive' : c.status,
       active_campaigns: (c.ad_campaigns ?? []).filter((cam: { status: string }) => cam.status === 'active').length,
       ad_campaigns: undefined,
     }))
@@ -51,14 +52,18 @@ export async function POST(req: NextRequest) {
       name: parsed.data.name,
       company: parsed.data.company ?? null,
       email: (parsed.data.email ?? '') as string,
-      status: parsed.data.status,
+      status: parsed.data.status === 'inactive' ? 'paused' : parsed.data.status,
     }
     const resp = await axios.post(
       `${API_BASE_URL.replace(/\/$/, '')}/ads/clients`,
       payload,
       { headers: { cookie: cookieHeader } }
     )
-    return NextResponse.json(resp.data, { status: 201 })
+    const mappedResponse = {
+      ...resp.data,
+      status: resp.data.status === 'paused' ? 'inactive' : resp.data.status,
+    }
+    return NextResponse.json(mappedResponse, { status: 201 })
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     return NextResponse.json({ error: msg }, { status: 400 })
