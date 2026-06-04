@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { X, ExternalLink } from 'lucide-react'
 import type { AdPlacementData } from './AdBanner'
 
@@ -13,9 +14,16 @@ interface Props {
 export default function AdPopup({ placements, promptId, creatorId }: Props) {
   const [isOpen, setIsOpen] = useState(false)
   const [hasImpressed, setHasImpressed] = useState(false)
+  const [mounted, setMounted] = useState(false)
 
   // Find placement for popup position
   const placement = placements.find(p => p.position === 'popup')
+
+  // Ensure we're mounted on the client before using portals
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setMounted(true)
+  }, [])
 
   useEffect(() => {
     if (!placement) return
@@ -28,6 +36,22 @@ export default function AdPopup({ placements, promptId, creatorId }: Props) {
     return () => clearTimeout(timer)
   }, [placement])
 
+  // Lock background scroll while popup is open
+  useEffect(() => {
+    if (isOpen) {
+      document.body.style.overflow = 'hidden'
+      document.documentElement.style.overflow = 'hidden'
+    } else {
+      document.body.style.overflow = ''
+      document.documentElement.style.overflow = ''
+    }
+    return () => {
+      document.body.style.overflow = ''
+      document.documentElement.style.overflow = ''
+    }
+  }, [isOpen])
+
+  // Track impressions
   useEffect(() => {
     if (isOpen && placement && !hasImpressed) {
       const sessionKey = `imp_popup_${placement.id}`
@@ -52,7 +76,7 @@ export default function AdPopup({ placements, promptId, creatorId }: Props) {
     }
   }, [isOpen, placement, hasImpressed, promptId, creatorId])
 
-  if (!placement || !isOpen) return null
+  if (!mounted || !placement || !isOpen) return null
 
   const baseClickUrl = `/api/ads/click?placement_id=${placement.id}&campaign_id=${placement.campaign.id}&prompt_id=${promptId}`
 
@@ -61,7 +85,7 @@ export default function AdPopup({ placements, promptId, creatorId }: Props) {
   try {
     const url = new URL(placement.campaign.target_url)
     displayUrl = url.hostname.replace('www.', '')
-  } catch (e) { }
+  } catch { }
 
   function handleClick(e: React.MouseEvent<HTMLAnchorElement>) {
     e.preventDefault()
@@ -71,58 +95,195 @@ export default function AdPopup({ placements, promptId, creatorId }: Props) {
     setIsOpen(false)
   }
 
-  return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/20 backdrop-blur-md animate-in fade-in duration-500">
-      <div className="relative w-full max-w-xl bg-zinc-900 rounded-[32px] overflow-hidden shadow-[0_32px_128px_-12px_rgba(0,0,0,0.8)] border border-zinc-800 animate-in zoom-in-95 duration-500">
+  // Render via portal directly into document.body — this escapes ALL ancestor
+  // CSS (overflow:hidden, transforms, backdrop-filter) that break position:fixed.
+  return createPortal(
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 99999,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '16px',
+        backgroundColor: 'rgba(0,0,0,0.6)',
+        backdropFilter: 'blur(12px)',
+        WebkitBackdropFilter: 'blur(12px)',
+        animation: 'adPopupFadeIn 0.4s ease forwards',
+      }}
+    >
+      <style>{`
+        @keyframes adPopupFadeIn {
+          from { opacity: 0; }
+          to   { opacity: 1; }
+        }
+        @keyframes adPopupZoomIn {
+          from { opacity: 0; transform: scale(0.92) translateY(16px); }
+          to   { opacity: 1; transform: scale(1)    translateY(0);    }
+        }
+      `}</style>
+
+      <div
+        style={{
+          position: 'relative',
+          width: '100%',
+          maxWidth: '560px',
+          maxHeight: '90vh',
+          overflowY: 'auto',
+          background: 'linear-gradient(180deg, #18181b 0%, #0f0f10 100%)',
+          borderRadius: '28px',
+          border: '1px solid rgba(255,255,255,0.08)',
+          boxShadow: '0 40px 120px -20px rgba(0,0,0,0.9)',
+          animation: 'adPopupZoomIn 0.45s cubic-bezier(0.22,1,0.36,1) forwards',
+        }}
+      >
         {/* Close Button */}
         <button
           onClick={() => setIsOpen(false)}
-          className="absolute top-6 right-6 z-20 p-2.5 rounded-full bg-black/40 text-zinc-400 hover:text-white hover:bg-black/60 backdrop-blur-md transition-all active:scale-95"
+          style={{
+            position: 'absolute',
+            top: '16px',
+            right: '16px',
+            zIndex: 10,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: '36px',
+            height: '36px',
+            borderRadius: '50%',
+            background: 'rgba(0,0,0,0.5)',
+            border: '1px solid rgba(255,255,255,0.1)',
+            color: '#a1a1aa',
+            cursor: 'pointer',
+            transition: 'all 0.2s',
+          }}
+          onMouseEnter={e => {
+            (e.currentTarget as HTMLButtonElement).style.background = 'rgba(0,0,0,0.8)'
+            ;(e.currentTarget as HTMLButtonElement).style.color = '#ffffff'
+          }}
+          onMouseLeave={e => {
+            (e.currentTarget as HTMLButtonElement).style.background = 'rgba(0,0,0,0.5)'
+            ;(e.currentTarget as HTMLButtonElement).style.color = '#a1a1aa'
+          }}
         >
-          <X className="w-5 h-5" />
+          <X style={{ width: '18px', height: '18px' }} />
         </button>
 
-        <a href={baseClickUrl} onClick={handleClick} className="block group">
-          {/* Full Image Container */}
-          <div className="relative w-full bg-black flex items-center justify-center overflow-hidden border-b border-zinc-800">
+        <a href={baseClickUrl} onClick={handleClick} style={{ display: 'block', textDecoration: 'none' }}>
+          {/* Banner Image */}
+          <div
+            style={{
+              position: 'relative',
+              width: '100%',
+              background: '#000',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              overflow: 'hidden',
+              borderBottom: '1px solid rgba(255,255,255,0.06)',
+              borderRadius: '28px 28px 0 0',
+            }}
+          >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={placement.campaign.banner_url}
               alt={placement.campaign.banner_alt || placement.campaign.name}
-              className="w-full h-auto max-h-[50vh] object-contain transition-transform duration-700 group-hover:scale-[1.02]"
+              style={{
+                width: '100%',
+                height: 'auto',
+                maxHeight: '45vh',
+                objectFit: 'contain',
+                display: 'block',
+              }}
             />
-            {/* Subtle Gradient Overlay */}
-            <div className="absolute inset-0 bg-gradient-to-t from-zinc-900/40 to-transparent pointer-events-none" />
+            <div
+              style={{
+                position: 'absolute',
+                inset: 0,
+                background: 'linear-gradient(to top, rgba(24,24,27,0.5), transparent)',
+                pointerEvents: 'none',
+              }}
+            />
           </div>
 
-          <div className="p-8 sm:p-10 text-center space-y-6 bg-gradient-to-b from-zinc-900 to-zinc-950">
-            <div className="space-y-3">
-              <span className="inline-block px-3 py-1 rounded-full bg-indigo-500/10 text-indigo-400 text-[10px] font-bold uppercase tracking-widest border border-indigo-500/20">
+          {/* Text & CTA */}
+          <div style={{ padding: '28px 32px 32px', textAlign: 'center' }}>
+            <div style={{ marginBottom: '16px' }}>
+              <span
+                style={{
+                  display: 'inline-block',
+                  padding: '4px 12px',
+                  borderRadius: '999px',
+                  background: 'rgba(99,102,241,0.12)',
+                  border: '1px solid rgba(99,102,241,0.25)',
+                  color: '#818cf8',
+                  fontSize: '10px',
+                  fontWeight: 700,
+                  letterSpacing: '0.1em',
+                  textTransform: 'uppercase',
+                  marginBottom: '12px',
+                }}
+              >
                 Sponsored
               </span>
-              <h3 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight group-hover:text-indigo-400 transition-colors leading-tight">
+              <h3
+                style={{
+                  margin: '0 0 8px',
+                  color: '#ffffff',
+                  fontSize: 'clamp(20px, 4vw, 26px)',
+                  fontWeight: 800,
+                  letterSpacing: '-0.02em',
+                  lineHeight: 1.2,
+                }}
+              >
                 {placement.campaign.name}
               </h3>
               {placement.campaign.banner_alt && (
-                <p className="text-zinc-400 text-sm sm:text-base leading-relaxed max-w-md mx-auto">
+                <p style={{ margin: 0, color: '#a1a1aa', fontSize: '14px', lineHeight: 1.6 }}>
                   {placement.campaign.banner_alt}
                 </p>
               )}
             </div>
 
-            <div className="flex flex-col items-center gap-6 pt-2">
-              <div className="inline-flex items-center gap-2 text-zinc-500 text-xs font-medium bg-zinc-800/50 px-3 py-1.5 rounded-lg border border-zinc-700/50">
-                <ExternalLink className="w-3 h-3" />
-                {displayUrl}
-              </div>
+            <div
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                color: '#71717a',
+                fontSize: '12px',
+                background: 'rgba(255,255,255,0.04)',
+                border: '1px solid rgba(255,255,255,0.08)',
+                borderRadius: '8px',
+                padding: '6px 12px',
+                marginBottom: '20px',
+              }}
+            >
+              <ExternalLink style={{ width: '12px', height: '12px' }} />
+              {displayUrl}
+            </div>
 
-              <span className="inline-flex items-center justify-center w-full sm:w-auto px-12 py-4 rounded-2xl bg-white text-black font-bold text-base transition-all group-hover:bg-indigo-50 group-hover:shadow-[0_20px_40px_-12px_rgba(255,255,255,0.2)] active:scale-[0.98]">
-                Get Started Now
-              </span>
+            <div
+              style={{
+                display: 'block',
+                width: '100%',
+                padding: '14px 24px',
+                background: '#ffffff',
+                color: '#000000',
+                borderRadius: '14px',
+                fontWeight: 700,
+                fontSize: '15px',
+                textAlign: 'center',
+                transition: 'background 0.2s, transform 0.15s',
+              }}
+            >
+              Get Started Now
             </div>
           </div>
         </a>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }

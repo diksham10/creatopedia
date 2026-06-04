@@ -236,7 +236,7 @@ export default function EnhancedPublicPromptUI({
   const toolColor = AI_TOOL_COLORS[prompt.ai_tool?.split(',')[0].trim()] ?? '#6366f1'
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] pb-20 text-white select-none relative overflow-hidden">
+    <div className="min-h-screen bg-[#0a0a0a] pb-20 text-white select-none relative">
       {/* ─── Hero Cover & Header Section ─── */}
       <div className="relative w-full overflow-hidden select-none mb-4 animate-in fade-in duration-500">
         {/* Cover Image Background */}
@@ -469,10 +469,6 @@ export default function EnhancedPublicPromptUI({
 
                   {adBelowPrompt && <div className="mt-8">{adBelowPrompt}</div>}
                 </div>
-
-                {adPopupPlacements && adPopupPlacements.length > 0 && (
-                  <AdPopup placements={adPopupPlacements} promptId={prompt.id} creatorId={creator.id} />
-                )}
 
                 {/* Related Prompts Section */}
                 <div className="px-4 md:px-8 pb-12 bg-zinc-950/40 pt-8 border-t border-white/5">
@@ -745,6 +741,11 @@ export default function EnhancedPublicPromptUI({
           </div>
         </div>
       )}
+
+      {adPopupPlacements && adPopupPlacements.length > 0 && (
+        <AdPopup placements={adPopupPlacements} promptId={prompt.id} creatorId={creator.id} />
+      )}
+
       <footer className="mt-12 mb-8 px-6 text-center animate-in fade-in slide-in-from-bottom-2 duration-1000 delay-500">
         <div className="flex items-center justify-center gap-6 text-[10px] font-mono tracking-widest text-white/20 uppercase">
           <Link href="/privacy-policy" className="hover:text-white/40 transition-colors">Privacy</Link>
